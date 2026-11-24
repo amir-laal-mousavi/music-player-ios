@@ -1,10 +1,16 @@
 import Foundation
 
+public enum PlaybackInterruptionReason: String, Sendable, Equatable {
+    case audioSession
+    case routeChange
+}
+
 public enum PlaybackStatus: Sendable, Equatable {
     case idle
     case loading
     case playing
     case paused
+    case interrupted(PlaybackInterruptionReason)
     case completed
     case failed
 }
@@ -57,7 +63,7 @@ public struct PlaybackState: Sendable, Equatable {
             guard currentTrackID != nil, position == 0, error == nil else {
                 throw DomainError.invalidPlaybackState
             }
-        case .playing, .paused:
+        case .playing, .paused, .interrupted:
             guard currentTrackID != nil, error == nil else {
                 throw DomainError.invalidPlaybackState
             }

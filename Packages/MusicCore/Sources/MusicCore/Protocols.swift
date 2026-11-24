@@ -42,6 +42,7 @@ public protocol PlayerEngine: Sendable {
     func observeState() -> AsyncStream<PlaybackState>
     func play(_ track: Track) async throws
     func pause() async throws
+    /// Resumes paused or interrupted playback from its preserved position.
     func resume() async throws
     func stop() async throws
     func seek(to position: TimeInterval) async throws

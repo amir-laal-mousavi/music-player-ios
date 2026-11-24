@@ -36,6 +36,18 @@ final class ProgressAndPlaybackTests: XCTestCase {
         XCTAssertNoThrow(try PlaybackState(status: .loading, currentTrackID: trackID, duration: 120))
         XCTAssertNoThrow(try PlaybackState(status: .playing, currentTrackID: trackID, position: 30, duration: 120))
         XCTAssertNoThrow(try PlaybackState(status: .paused, currentTrackID: trackID, position: 30, duration: 120))
+        XCTAssertNoThrow(try PlaybackState(
+            status: .interrupted(.audioSession),
+            currentTrackID: trackID,
+            position: 30,
+            duration: 120
+        ))
+        XCTAssertNoThrow(try PlaybackState(
+            status: .interrupted(.routeChange),
+            currentTrackID: trackID,
+            position: 45,
+            duration: 120
+        ))
         XCTAssertNoThrow(try PlaybackState(status: .completed, currentTrackID: trackID, position: 120, duration: 120))
         XCTAssertNoThrow(try PlaybackState(status: .failed, currentTrackID: trackID, error: .playback(.fileUnavailable)))
 
@@ -48,6 +60,18 @@ final class ProgressAndPlaybackTests: XCTestCase {
         XCTAssertThrowsError(try PlaybackState(status: .completed, currentTrackID: trackID, position: 119, duration: 120))
         XCTAssertThrowsError(try PlaybackState(status: .failed, currentTrackID: trackID))
         XCTAssertThrowsError(try PlaybackState(status: .paused, currentTrackID: trackID, error: .playback(.notReady)))
+        XCTAssertThrowsError(try PlaybackState(
+            status: .interrupted(.audioSession),
+            position: 30,
+            duration: 120
+        ))
+        XCTAssertThrowsError(try PlaybackState(
+            status: .interrupted(.routeChange),
+            currentTrackID: trackID,
+            position: 30,
+            duration: 120,
+            error: .unavailable
+        ))
         XCTAssertThrowsError(try PlaybackState(status: .idle, currentTrackID: trackID))
     }
 }

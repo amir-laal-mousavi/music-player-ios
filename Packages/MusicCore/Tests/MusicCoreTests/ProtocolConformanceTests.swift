@@ -179,11 +179,29 @@ private actor PlayerEngineSpy: PlayerEngine {
     }
 
     func resume() async throws {
-        guard state.status == .paused, let trackID = state.currentTrackID else {
+        switch state.status {
+        case .paused, .interrupted:
+            break
+        default:
+            throw DomainError.playback(.notReady)
+        }
+        guard let trackID = state.currentTrackID else {
             throw DomainError.playback(.notReady)
         }
         state = try PlaybackState(
             status: .playing,
+            currentTrackID: trackID,
+            position: state.position,
+            duration: state.duration
+        )
+    }
+
+    func simulateInterruption(reason: PlaybackInterruptionReason) async throws {
+        guard state.status == .playing || state.status == .paused, let trackID = state.currentTrackID else {
+            throw DomainError.playback(.notReady)
+        }
+        state = try PlaybackState(
+            status: .interrupted(reason),
             currentTrackID: trackID,
             position: state.position,
             duration: state.duration
@@ -328,6 +346,24 @@ final class ProtocolConformanceTests: XCTestCase {
         try await store.saveImportJob(active)
         let updated = await iterator.next()
         XCTAssertEqual(updated, [active])
+    }
+
+    func testPlayerPreservesPositionAcrossExplicitInterruptionResume() async throws {
+        let player = PlayerEngineSpy()
+        let track = try TestFixtures.track(audio: TestFixtures.audio())
+        try await player.play(track)
+        try await player.seek(to: 42)
+        for reason in [PlaybackInterruptionReason.audioSession, .routeChange] {
+            try await player.simulateInterruption(reason: reason)
+            var state = await player.state
+            XCTAssertEqual(state.status, .interrupted(reason))
+            XCTAssertEqual(state.currentTrackID, track.id)
+            XCTAssertEqual(state.position, 42)
+            try await player.resume()
+            state = await player.state
+            XCTAssertEqual(state.status, .playing)
+            XCTAssertEqual(state.position, 42)
+        }
     }
 
     func testPlayerSupportsLocalControlsAndState() async throws {
