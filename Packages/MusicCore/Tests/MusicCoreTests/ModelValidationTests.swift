@@ -3,6 +3,29 @@ import Foundation
 import XCTest
 
 final class ModelValidationTests: XCTestCase {
+    func testCurrentAccountHasStableIdentityAndMaskedPhone() throws {
+        let account = try TestFixtures.account()
+        let sameAccount = try TestFixtures.account()
+        XCTAssertEqual(account.id, 700_001)
+        XCTAssertEqual(account, sameAccount)
+        XCTAssertEqual(account.maskedPhoneNumber, "••••0100")
+        XCTAssertFalse(String(describing: account).contains("555 0100"))
+        XCTAssertThrowsError(try TelegramAccount(id: 0, displayName: "Fixture", phoneNumber: "+1 555 0100")) { error in
+            XCTAssertEqual(error as? DomainError, .invalidAccountIdentifier)
+        }
+        XCTAssertThrowsError(try TelegramAccount(id: 1, displayName: " ", phoneNumber: "+1 555 0100")) { error in
+            XCTAssertEqual(error as? DomainError, .invalidAccountName)
+        }
+        XCTAssertThrowsError(try TelegramAccount(id: 1, displayName: "Fixture", phoneNumber: "1234")) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPhoneNumber)
+        }
+        XCTAssertThrowsError(
+            try TelegramAccount(id: 1, displayName: "Fixture", phoneNumber: "+1 555 0100", username: " ")
+        ) { error in
+            XCTAssertEqual(error as? DomainError, .invalidAccountUsername)
+        }
+    }
+
     func testTelegramIdentityUsesChatAndMessageIDs() throws {
         let first = try TelegramAudioIdentity(chatID: -100_123, messageID: 42)
         let same = try TelegramAudioIdentity(chatID: -100_123, messageID: 42)

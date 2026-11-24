@@ -4,6 +4,7 @@ import XCTest
 
 private actor TelegramGatewaySpy: TelegramGateway {
     private(set) var authState: TelegramAuthState = .unauthenticated
+    private(set) var currentAccount: TelegramAccount?
     private(set) var phone: String?
     private(set) var code: String?
     private(set) var password: String?
@@ -25,20 +26,28 @@ private actor TelegramGatewaySpy: TelegramGateway {
 
     func submitPassword(_ password: String) async throws {
         self.password = try validatedPassword(password)
+        currentAccount = try TestFixtures.account()
         authState = try authState.transition(to: .authenticated)
     }
 
     func logout() async throws {
         authState = try authState.transition(to: .loggingOut)
         authState = try authState.transition(to: .unauthenticated)
+        currentAccount = nil
+    }
+
+    private func requireAuthentication() throws {
+        guard currentAccount != nil else { throw DomainError.unauthenticated }
     }
 
     func loadChats() async throws -> [TelegramChat] {
-        [try TelegramChat(id: TestFixtures.chatID, title: "Fixture chat", kind: .group)]
+        try requireAuthentication()
+        return [try TelegramChat(id: TestFixtures.chatID, title: "Fixture chat", kind: .group)]
     }
 
     func loadAudioMessages(_ request: TelegramAudioPageRequest) async throws -> TelegramAudioPage {
-        try TelegramAudioPage(
+        try requireAuthentication()
+        return try TelegramAudioPage(
             chatID: request.chatID,
             messages: [
                 try TestFixtures.audio(messageID: 11, chatID: request.chatID),
@@ -52,8 +61,9 @@ private actor TelegramGatewaySpy: TelegramGateway {
         _ audio: TelegramAudio,
         progress: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> URL {
+        try requireAuthentication()
         progress(try DownloadProgress(totalBytes: audio.fileSize, completedBytes: 512))
-        return URL(fileURLWithPath: "/tmp/\(audio.id).mp3")
+        return URL(fileURLWithPath: "/tmp/\(audio.chatID)-\(audio.messageID).mp3")
     }
 
     func cancelDownload(for identity: TelegramAudioIdentity) async {
@@ -164,6 +174,16 @@ private actor PlayerEngineSpy: PlayerEngine {
 }
 
 final class ProtocolConformanceTests: XCTestCase {
+    func testGatewayRejectsChatAccessBeforeAuthentication() async throws {
+        let gateway = TelegramGatewaySpy()
+        do {
+            _ = try await gateway.loadChats()
+            XCTFail("Chat access requires an authenticated account")
+        } catch {
+            XCTAssertEqual(error as? DomainError, .unauthenticated)
+        }
+    }
+
     func testGatewaySupportsAuthenticationPaginationDownloadAndCancellation() async throws {
         let gateway = TelegramGatewaySpy()
         try await gateway.submitPhone(" +1 555 0100 ")
@@ -175,6 +195,8 @@ final class ProtocolConformanceTests: XCTestCase {
         try await gateway.submitPassword("test-password")
         state = await gateway.authState
         XCTAssertEqual(state, .authenticated)
+        let account = await gateway.currentAccount
+        XCTAssertEqual(account, try TestFixtures.account())
 
         let chats = try await gateway.loadChats()
         let request = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: 9, limit: 2)
@@ -195,6 +217,8 @@ final class ProtocolConformanceTests: XCTestCase {
         try await gateway.logout()
         state = await gateway.authState
         XCTAssertEqual(state, .unauthenticated)
+        let loggedOutAccount = await gateway.currentAccount
+        XCTAssertNil(loggedOutAccount)
     }
 
     func testStoreSupportsUniqueTracksDeletionAndImportSnapshots() async throws {

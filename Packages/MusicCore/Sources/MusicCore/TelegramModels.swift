@@ -62,6 +62,36 @@ public func validatedPassword(_ password: String) throws -> String {
     return password
 }
 
+public struct TelegramAccount: Identifiable, Sendable, Equatable {
+    public typealias ID = Int64
+
+    public let id: ID
+    public let displayName: String
+    public let maskedPhoneNumber: String
+    public let username: String?
+
+    public init(id: ID, displayName: String, phoneNumber: String, username: String? = nil) throws {
+        guard id > 0 else { throw DomainError.invalidAccountIdentifier }
+        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw DomainError.invalidAccountName }
+        let phone = try validatedPhoneNumber(phoneNumber)
+        let digits = phone.filter { $0.isWholeNumber }
+        guard digits.count > 4 else { throw DomainError.invalidPhoneNumber }
+
+        if let username {
+            let value = username.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { throw DomainError.invalidAccountUsername }
+            self.username = value
+        } else {
+            self.username = nil
+        }
+
+        self.id = id
+        self.displayName = name
+        self.maskedPhoneNumber = String(repeating: "•", count: digits.count - 4) + String(digits.suffix(4))
+    }
+}
+
 public enum TelegramChatKind: String, Sendable, Equatable {
     case user
     case group

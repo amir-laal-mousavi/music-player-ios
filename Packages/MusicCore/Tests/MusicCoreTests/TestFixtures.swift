@@ -4,6 +4,15 @@ import Foundation
 enum TestFixtures {
     static let chatID: TelegramChat.ID = -100_123
 
+    static func account() throws -> TelegramAccount {
+        try TelegramAccount(
+            id: 700_001,
+            displayName: "Fixture User",
+            phoneNumber: "+1 555 0100",
+            username: "fixture_user"
+        )
+    }
+
     static func audio(
         messageID: TelegramAudio.MessageID = 42,
         chatID: TelegramChat.ID = TestFixtures.chatID,

@@ -1,7 +1,10 @@
 import Foundation
 
+/// Chat and audio operations require an authenticated current account.
 public protocol TelegramGateway: Sendable {
     var authState: TelegramAuthState { get async }
+    /// The authenticated Telegram user, or nil when no account is active.
+    var currentAccount: TelegramAccount? { get async }
     func observeAuthState() -> AsyncStream<TelegramAuthState>
     func submitPhone(_ phone: String) async throws
     func submitCode(_ code: String) async throws

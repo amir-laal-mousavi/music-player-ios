@@ -26,6 +26,9 @@ public enum DomainError: Error, Equatable, Sendable {
     case invalidPhoneNumber
     case invalidAuthenticationCode
     case invalidPassword
+    case invalidAccountIdentifier
+    case invalidAccountName
+    case invalidAccountUsername
     case invalidChatIdentifier
     case invalidAudioIdentifier
     case invalidChatTitle
