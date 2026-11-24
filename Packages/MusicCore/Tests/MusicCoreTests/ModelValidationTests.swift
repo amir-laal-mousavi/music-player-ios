@@ -131,9 +131,38 @@ final class ModelValidationTests: XCTestCase {
         XCTAssertEqual(track.id, id)
         XCTAssertNotEqual(track.id, sameSource.id)
         XCTAssertEqual(track.telegramIdentity, sameSource.telegramIdentity)
+        XCTAssertEqual(track.sourceChat.id, audio.chatID)
+        XCTAssertEqual(track.sourceChat.title, "Fixture chat")
+        XCTAssertEqual(track.importedAt, Date(timeIntervalSince1970: 100))
         XCTAssertThrowsError(
             try Track(
                 telegramIdentity: audio.identity,
+                sourceChat: try TestFixtures.chat(id: TestFixtures.chatID + 1),
+                title: audio.title,
+                artist: audio.performer,
+                duration: audio.duration,
+                localURL: URL(fileURLWithPath: "/tmp/audio.mp3")
+            )
+        ) { error in
+            XCTAssertEqual(error as? DomainError, .invalidTrack)
+        }
+        XCTAssertThrowsError(
+            try Track(
+                telegramIdentity: audio.identity,
+                sourceChat: try TestFixtures.chat(),
+                title: audio.title,
+                artist: audio.performer,
+                duration: audio.duration,
+                importedAt: Date(timeIntervalSince1970: .nan),
+                localURL: URL(fileURLWithPath: "/tmp/audio.mp3")
+            )
+        ) { error in
+            XCTAssertEqual(error as? DomainError, .invalidTrack)
+        }
+        XCTAssertThrowsError(
+            try Track(
+                telegramIdentity: audio.identity,
+                sourceChat: try TestFixtures.chat(),
                 title: audio.title,
                 artist: audio.performer,
                 duration: audio.duration,
@@ -145,6 +174,7 @@ final class ModelValidationTests: XCTestCase {
         XCTAssertThrowsError(
             try Track(
                 telegramIdentity: audio.identity,
+                sourceChat: try TestFixtures.chat(),
                 title: audio.title,
                 artist: audio.performer,
                 duration: .infinity,

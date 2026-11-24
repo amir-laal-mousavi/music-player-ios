@@ -4,6 +4,14 @@ import Foundation
 enum TestFixtures {
     static let chatID: TelegramChat.ID = -100_123
 
+    static func chat(
+        id: TelegramChat.ID = TestFixtures.chatID,
+        title: String = "Fixture chat",
+        kind: TelegramChatKind = .group
+    ) throws -> TelegramChat {
+        try TelegramChat(id: id, title: title, kind: kind)
+    }
+
     static func account() throws -> TelegramAccount {
         try TelegramAccount(
             id: 700_001,
@@ -32,14 +40,20 @@ enum TestFixtures {
         )
     }
 
-    static func track(audio: TelegramAudio, id: Track.ID = UUID()) throws -> Track {
+    static func track(
+        audio: TelegramAudio,
+        id: Track.ID = UUID(),
+        importedAt: Date = Date(timeIntervalSince1970: 100)
+    ) throws -> Track {
         try Track(
             id: id,
             telegramIdentity: audio.identity,
+            sourceChat: chat(id: audio.chatID),
             title: audio.title,
             artist: audio.performer,
             duration: audio.duration,
             fileSize: audio.fileSize,
+            importedAt: importedAt,
             localURL: URL(fileURLWithPath: "/tmp/\(id.uuidString).mp3")
         )
     }

@@ -20,6 +20,7 @@ public protocol TelegramGateway: Sendable {
 }
 
 public protocol LibraryStore: Sendable {
+    /// Returns tracks ordered by importedAt, newest first.
     func tracks() async throws -> [Track]
     func observeTracks() -> AsyncStream<[Track]>
     func track(id: Track.ID) async throws -> Track
@@ -27,6 +28,7 @@ public protocol LibraryStore: Sendable {
     /// Inserts one track and rejects an existing Telegram audio identity.
     func insertTrack(_ track: Track) async throws
     func deleteTrack(id: Track.ID) async throws
+    /// Returns jobs ordered by createdAt, newest first.
     func importJobs() async throws -> [ImportJob]
     func importJob(id: ImportJob.ID) async throws -> ImportJob
     /// Replaces the whole persisted job so item progress survives process restarts.

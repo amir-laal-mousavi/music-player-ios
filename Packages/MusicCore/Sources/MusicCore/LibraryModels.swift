@@ -89,22 +89,28 @@ public struct ImportJob: Identifiable, Sendable, Equatable {
     public typealias ID = UUID
 
     public let id: ID
-    public let chatID: TelegramChat.ID
+    public let sourceChat: TelegramChat
     public let items: [ImportItem]
     public let status: ImportJobStatus
     public let createdAt: Date
     public let updatedAt: Date
 
+    public var chatID: TelegramChat.ID { sourceChat.id }
+
     public init(
         id: ID = UUID(),
-        chatID: TelegramChat.ID,
+        sourceChat: TelegramChat,
         items: [ImportItem],
         status: ImportJobStatus = .queued,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) throws {
-        guard chatID != 0 else { throw DomainError.invalidImportJob }
-        guard items.allSatisfy({ $0.audio.chatID == chatID }) else {
+        guard createdAt.timeIntervalSince1970.isFinite,
+              updatedAt.timeIntervalSince1970.isFinite,
+              updatedAt >= createdAt else {
+            throw DomainError.invalidImportJob
+        }
+        guard items.allSatisfy({ $0.audio.chatID == sourceChat.id }) else {
             throw DomainError.invalidImportJob
         }
         var identities = Set<TelegramAudioIdentity>()
@@ -114,7 +120,7 @@ public struct ImportJob: Identifiable, Sendable, Equatable {
             }
         }
         self.id = id
-        self.chatID = chatID
+        self.sourceChat = sourceChat
         self.items = items
         self.status = status
         self.createdAt = createdAt
@@ -153,7 +159,7 @@ public struct ImportJob: Identifiable, Sendable, Equatable {
         }
         return try ImportJob(
             id: id,
-            chatID: chatID,
+            sourceChat: sourceChat,
             items: items,
             status: next,
             createdAt: createdAt,
@@ -167,30 +173,38 @@ public struct Track: Identifiable, Sendable, Equatable {
 
     public let id: ID
     public let telegramIdentity: TelegramAudioIdentity
+    public let sourceChat: TelegramChat
     public let title: String
     public let artist: String
     public let duration: TimeInterval
     public let fileSize: Int64?
+    public let importedAt: Date
     public let localURL: URL
 
     public init(
         id: ID = UUID(),
         telegramIdentity: TelegramAudioIdentity,
+        sourceChat: TelegramChat,
         title: String,
         artist: String,
         duration: TimeInterval,
         fileSize: Int64? = nil,
+        importedAt: Date = Date(),
         localURL: URL
     ) throws {
+        guard sourceChat.id == telegramIdentity.chatID else { throw DomainError.invalidTrack }
         guard duration.isFinite, duration >= 0 else { throw DomainError.invalidDuration }
         if let fileSize, fileSize < 0 { throw DomainError.invalidFileSize }
+        guard importedAt.timeIntervalSince1970.isFinite else { throw DomainError.invalidTrack }
         guard localURL.isFileURL else { throw DomainError.invalidTrack }
         self.id = id
         self.telegramIdentity = telegramIdentity
+        self.sourceChat = sourceChat
         self.title = title
         self.artist = artist
         self.duration = duration
         self.fileSize = fileSize
+        self.importedAt = importedAt
         self.localURL = localURL
     }
 }

@@ -64,6 +64,35 @@ final class ImportModelTests: XCTestCase {
         XCTAssertNoThrow(try ImportItem(audio: audio, status: .duplicate, trackID: UUID()))
     }
 
+    func testImportJobPersistsSourceAndValidatesOrdering() throws {
+        let audio = try TestFixtures.audio()
+        let sourceChat = try TestFixtures.chat(title: "Fixture channel", kind: .channel)
+        let createdAt = Date(timeIntervalSince1970: 100)
+        let updatedAt = Date(timeIntervalSince1970: 200)
+        let job = try ImportJob(
+            sourceChat: sourceChat,
+            items: [try ImportItem(audio: audio)],
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+        XCTAssertEqual(job.sourceChat, sourceChat)
+        XCTAssertEqual(job.chatID, TestFixtures.chatID)
+        XCTAssertEqual(job.createdAt, createdAt)
+        XCTAssertEqual(job.updatedAt, updatedAt)
+        XCTAssertThrowsError(try ImportJob(
+            sourceChat: sourceChat,
+            items: [try ImportItem(audio: audio)],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 99)
+        ))
+        XCTAssertThrowsError(try ImportJob(
+            sourceChat: sourceChat,
+            items: [try ImportItem(audio: audio)],
+            createdAt: Date(timeIntervalSince1970: .nan),
+            updatedAt: updatedAt
+        ))
+    }
+
     func testImportJobTransitionMatrixAndResumeSemantics() throws {
         let audio = try TestFixtures.audio()
         let item = try ImportItem(audio: audio)
@@ -91,7 +120,7 @@ final class ImportModelTests: XCTestCase {
         let updatedAt = Date(timeIntervalSince1970: 200)
         for from in statuses {
             let job = try ImportJob(
-                chatID: TestFixtures.chatID,
+                sourceChat: try TestFixtures.chat(),
                 items: [item],
                 status: from,
                 createdAt: createdAt,
@@ -113,7 +142,7 @@ final class ImportModelTests: XCTestCase {
             }
         }
 
-        let paused = try ImportJob(chatID: TestFixtures.chatID, items: [item], status: .paused)
+        let paused = try ImportJob(sourceChat: try TestFixtures.chat(), items: [item], status: .paused)
         let waiting = try paused.transition(to: .waitingToResume)
         let queued = try waiting.transition(to: .queued)
         XCTAssertEqual(try queued.transition(to: .active).status, .active)
@@ -128,12 +157,12 @@ final class ImportModelTests: XCTestCase {
         let otherChatItem = try ImportItem(audio: otherChat)
 
         XCTAssertEqual(duplicate.id, first.id)
-        XCTAssertThrowsError(try ImportJob(chatID: TestFixtures.chatID, items: [firstItem, duplicateItem])) { error in
+        XCTAssertThrowsError(try ImportJob(sourceChat: try TestFixtures.chat(), items: [firstItem, duplicateItem])) { error in
             XCTAssertEqual(error as? DomainError, .duplicateImportItem(first.id))
         }
-        XCTAssertThrowsError(try ImportJob(chatID: TestFixtures.chatID, items: [firstItem, otherChatItem])) { error in
+        XCTAssertThrowsError(try ImportJob(sourceChat: try TestFixtures.chat(), items: [firstItem, otherChatItem])) { error in
             XCTAssertEqual(error as? DomainError, .invalidImportJob)
         }
-        XCTAssertNoThrow(try ImportJob(chatID: TestFixtures.chatID, items: [firstItem], status: .queued))
+        XCTAssertNoThrow(try ImportJob(sourceChat: try TestFixtures.chat(), items: [firstItem], status: .queued))
     }
 }

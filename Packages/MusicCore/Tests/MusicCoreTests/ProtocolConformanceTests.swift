@@ -79,7 +79,9 @@ private actor LibraryStoreSpy: LibraryStore {
         AsyncStream { $0.finish() }
     }
 
-    func tracks() async throws -> [Track] { storedTracks }
+    func tracks() async throws -> [Track] {
+        storedTracks.sorted { $0.importedAt > $1.importedAt }
+    }
 
     func track(id: Track.ID) async throws -> Track {
         guard let track = storedTracks.first(where: { $0.id == id }) else {
@@ -107,7 +109,7 @@ private actor LibraryStoreSpy: LibraryStore {
     }
 
     func importJobs() async throws -> [ImportJob] {
-        Array(jobs.values)
+        jobs.values.sorted { $0.createdAt > $1.createdAt }
     }
 
     func importJob(id: ImportJob.ID) async throws -> ImportJob {
@@ -226,8 +228,13 @@ final class ProtocolConformanceTests: XCTestCase {
         let audio = try TestFixtures.audio()
         let track = try TestFixtures.track(audio: audio)
         try await store.insertTrack(track)
+        let olderTrack = try TestFixtures.track(
+            audio: try TestFixtures.audio(messageID: 43),
+            importedAt: Date(timeIntervalSince1970: 50)
+        )
+        try await store.insertTrack(olderTrack)
         let tracks = try await store.tracks()
-        XCTAssertEqual(tracks, [track])
+        XCTAssertEqual(tracks, [track, olderTrack])
         let found = try await store.track(for: audio.identity)
         XCTAssertEqual(found, track)
 
@@ -239,7 +246,7 @@ final class ProtocolConformanceTests: XCTestCase {
         }
 
         let item = try ImportItem(audio: audio)
-        let job = try ImportJob(chatID: TestFixtures.chatID, items: [item])
+        let job = try ImportJob(sourceChat: try TestFixtures.chat(), items: [item])
         try await store.saveImportJob(job)
         let active = try job.transition(to: .active)
         try await store.saveImportJob(active)
@@ -247,8 +254,18 @@ final class ProtocolConformanceTests: XCTestCase {
         XCTAssertEqual(persisted, active)
         let jobs = try await store.importJobs()
         XCTAssertEqual(jobs, [active])
+        let olderJob = try ImportJob(
+            sourceChat: try TestFixtures.chat(),
+            items: [item],
+            createdAt: Date(timeIntervalSince1970: 50),
+            updatedAt: Date(timeIntervalSince1970: 50)
+        )
+        try await store.saveImportJob(olderJob)
+        let orderedJobs = try await store.importJobs()
+        XCTAssertEqual(orderedJobs, [active, olderJob])
 
         try await store.deleteTrack(id: track.id)
+        try await store.deleteTrack(id: olderTrack.id)
         let remaining = try await store.tracks()
         XCTAssertTrue(remaining.isEmpty)
         do {
