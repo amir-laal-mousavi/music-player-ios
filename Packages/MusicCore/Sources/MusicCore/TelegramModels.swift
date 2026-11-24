@@ -62,19 +62,27 @@ public func validatedPassword(_ password: String) throws -> String {
     return password
 }
 
+public enum TelegramChatKind: String, Sendable, Equatable {
+    case user
+    case group
+    case channel
+}
+
 public struct TelegramChat: Identifiable, Sendable, Equatable {
     public typealias ID = Int64
 
     public let id: ID
     public let title: String
+    public let kind: TelegramChatKind
 
-    public init(id: ID, title: String) throws {
+    public init(id: ID, title: String, kind: TelegramChatKind) throws {
         guard id != 0 else { throw DomainError.invalidChatIdentifier }
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DomainError.invalidChatTitle
         }
         self.id = id
         self.title = title
+        self.kind = kind
     }
 }
 
@@ -91,9 +99,11 @@ public struct TelegramAudioIdentity: Hashable, Sendable {
 }
 
 public struct TelegramAudio: Identifiable, Sendable, Equatable {
-    public typealias ID = Int64
+    public typealias MessageID = Int64
+    public typealias ID = TelegramAudioIdentity
 
     public let identity: TelegramAudioIdentity
+    public let fileID: Int32
     public let fileReference: String
     public let title: String
     public let performer: String
@@ -101,11 +111,13 @@ public struct TelegramAudio: Identifiable, Sendable, Equatable {
     public let fileSize: Int64?
     public let mimeType: String?
 
-    public var id: ID { identity.messageID }
+    public var id: ID { identity }
+    public var messageID: MessageID { identity.messageID }
     public var chatID: TelegramChat.ID { identity.chatID }
 
     public init(
         identity: TelegramAudioIdentity,
+        fileID: Int32,
         fileReference: String,
         title: String = "",
         performer: String = "",
@@ -113,6 +125,7 @@ public struct TelegramAudio: Identifiable, Sendable, Equatable {
         fileSize: Int64? = nil,
         mimeType: String? = nil
     ) throws {
+        guard fileID > 0 else { throw DomainError.invalidFileIdentifier }
         guard !fileReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DomainError.invalidFileReference
         }
@@ -122,6 +135,7 @@ public struct TelegramAudio: Identifiable, Sendable, Equatable {
             throw DomainError.invalidMIMEType
         }
         self.identity = identity
+        self.fileID = fileID
         self.fileReference = fileReference
         self.title = title
         self.performer = performer
@@ -132,17 +146,21 @@ public struct TelegramAudio: Identifiable, Sendable, Equatable {
 }
 
 public struct TelegramAudioPageRequest: Sendable, Equatable {
+    public static let maximumLimit = 100
+
     public let chatID: TelegramChat.ID
-    public let afterMessageID: TelegramAudio.ID?
+    public let beforeMessageID: TelegramAudio.MessageID?
     public let limit: Int
 
-    public init(chatID: TelegramChat.ID, afterMessageID: TelegramAudio.ID?, limit: Int) throws {
-        guard chatID != 0, limit > 0 else { throw DomainError.invalidAudioPageRequest }
-        if let afterMessageID, afterMessageID <= 0 {
+    public init(chatID: TelegramChat.ID, beforeMessageID: TelegramAudio.MessageID?, limit: Int) throws {
+        guard chatID != 0, (1...Self.maximumLimit).contains(limit) else {
+            throw DomainError.invalidAudioPageRequest
+        }
+        if let beforeMessageID, beforeMessageID <= 0 {
             throw DomainError.invalidAudioPageRequest
         }
         self.chatID = chatID
-        self.afterMessageID = afterMessageID
+        self.beforeMessageID = beforeMessageID
         self.limit = limit
     }
 }
@@ -150,18 +168,18 @@ public struct TelegramAudioPageRequest: Sendable, Equatable {
 public struct TelegramAudioPage: Sendable, Equatable {
     public let chatID: TelegramChat.ID
     public let messages: [TelegramAudio]
-    public let nextCursor: TelegramAudio.ID?
+    public let nextCursor: TelegramAudio.MessageID?
 
-    public init(chatID: TelegramChat.ID, messages: [TelegramAudio], nextCursor: TelegramAudio.ID?) throws {
+    public init(chatID: TelegramChat.ID, messages: [TelegramAudio], nextCursor: TelegramAudio.MessageID?) throws {
         guard chatID != 0 else { throw DomainError.invalidAudioPage }
         if let nextCursor, nextCursor <= 0 { throw DomainError.invalidAudioPage }
         guard messages.allSatisfy({ $0.chatID == chatID }) else {
             throw DomainError.invalidAudioPage
         }
-        for index in messages.indices.dropFirst() where messages[index - 1].id >= messages[index].id {
+        for index in messages.indices.dropFirst() where messages[index - 1].messageID <= messages[index].messageID {
             throw DomainError.invalidAudioPage
         }
-        if let nextCursor, messages.last?.id != nextCursor {
+        if let nextCursor, messages.last?.messageID != nextCursor {
             throw DomainError.invalidAudioPage
         }
         self.chatID = chatID

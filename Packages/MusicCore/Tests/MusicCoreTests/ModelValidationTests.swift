@@ -12,6 +12,10 @@ final class ModelValidationTests: XCTestCase {
         XCTAssertNotEqual(first, otherChat)
         XCTAssertNotEqual(first, otherMessage)
         XCTAssertEqual(Set([first, same, otherChat, otherMessage]).count, 3)
+        let firstAudio = try TestFixtures.audio(messageID: 42, chatID: -100_123)
+        let otherChatAudio = try TestFixtures.audio(messageID: 42, chatID: -100_124)
+        XCTAssertNotEqual(firstAudio.id, otherChatAudio.id)
+        XCTAssertEqual(firstAudio.id, firstAudio.identity)
         XCTAssertThrowsError(try TelegramAudioIdentity(chatID: 0, messageID: 42)) { error in
             XCTAssertEqual(error as? DomainError, .invalidChatIdentifier)
         }
@@ -24,48 +28,73 @@ final class ModelValidationTests: XCTestCase {
     }
 
     func testChatAndAudioValidation() throws {
-        XCTAssertNoThrow(try TelegramChat(id: -100_123, title: "Fixture chat"))
-        XCTAssertThrowsError(try TelegramChat(id: 0, title: "Fixture chat")) { error in
+        XCTAssertNoThrow(try TelegramChat(id: -100_123, title: "Fixture chat", kind: .user))
+        XCTAssertNoThrow(try TelegramChat(id: -100_123, title: "Fixture chat", kind: .group))
+        XCTAssertNoThrow(try TelegramChat(id: -100_123, title: "Fixture chat", kind: .channel))
+        XCTAssertThrowsError(try TelegramChat(id: 0, title: "Fixture chat", kind: .group)) { error in
             XCTAssertEqual(error as? DomainError, .invalidChatIdentifier)
         }
-        XCTAssertThrowsError(try TelegramChat(id: 1, title: " \n")) { error in
+        XCTAssertThrowsError(try TelegramChat(id: 1, title: " \n", kind: .user)) { error in
             XCTAssertEqual(error as? DomainError, .invalidChatTitle)
         }
 
         let identity = try TelegramAudioIdentity(chatID: 1, messageID: 2)
-        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileReference: " ", duration: 1)) { error in
+        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileID: 0, fileReference: "file", duration: 1)) { error in
+            XCTAssertEqual(error as? DomainError, .invalidFileIdentifier)
+        }
+        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileID: -1, fileReference: "file", duration: 1)) { error in
+            XCTAssertEqual(error as? DomainError, .invalidFileIdentifier)
+        }
+        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileID: 7, fileReference: " ", duration: 1)) { error in
             XCTAssertEqual(error as? DomainError, .invalidFileReference)
         }
-        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileReference: "file", duration: -1)) { error in
+        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileID: 7, fileReference: "file", duration: -1)) { error in
             XCTAssertEqual(error as? DomainError, .invalidDuration)
         }
-        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileReference: "file", duration: .nan)) { error in
+        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileID: 7, fileReference: "file", duration: .nan)) { error in
             XCTAssertEqual(error as? DomainError, .invalidDuration)
         }
-        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileReference: "file", duration: 1, fileSize: -1)) { error in
+        XCTAssertThrowsError(
+            try TelegramAudio(identity: identity, fileID: 7, fileReference: "file", duration: 1, fileSize: -1)
+        ) { error in
             XCTAssertEqual(error as? DomainError, .invalidFileSize)
         }
-        XCTAssertThrowsError(try TelegramAudio(identity: identity, fileReference: "file", duration: 1, mimeType: "")) { error in
+        XCTAssertThrowsError(
+            try TelegramAudio(identity: identity, fileID: 7, fileReference: "file", duration: 1, mimeType: "")
+        ) { error in
             XCTAssertEqual(error as? DomainError, .invalidMIMEType)
         }
+        let audio = try TelegramAudio(identity: identity, fileID: 7, fileReference: "file", duration: 1)
+        XCTAssertEqual(audio.fileID, 7)
     }
 
     func testAudioPageRequestAndCursorValidation() throws {
-        let first = try TestFixtures.audio(messageID: 10)
-        let second = try TestFixtures.audio(messageID: 11)
-        let request = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, afterMessageID: 9, limit: 2)
-        XCTAssertEqual(request.afterMessageID, 9)
+        let older = try TestFixtures.audio(messageID: 10)
+        let newer = try TestFixtures.audio(messageID: 11)
+        let request = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: 12, limit: 2)
+        XCTAssertEqual(request.beforeMessageID, 12)
         XCTAssertEqual(request.limit, 2)
-        XCTAssertThrowsError(try TelegramAudioPageRequest(chatID: 0, afterMessageID: nil, limit: 2))
-        XCTAssertThrowsError(try TelegramAudioPageRequest(chatID: TestFixtures.chatID, afterMessageID: 0, limit: 2))
-        XCTAssertThrowsError(try TelegramAudioPageRequest(chatID: TestFixtures.chatID, afterMessageID: nil, limit: 0))
+        XCTAssertNoThrow(try TelegramAudioPageRequest(
+            chatID: TestFixtures.chatID,
+            beforeMessageID: nil,
+            limit: TelegramAudioPageRequest.maximumLimit
+        ))
+        XCTAssertThrowsError(try TelegramAudioPageRequest(chatID: 0, beforeMessageID: nil, limit: 2))
+        XCTAssertThrowsError(try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: 0, limit: 2))
+        XCTAssertThrowsError(try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: -1, limit: 2))
+        XCTAssertThrowsError(try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: nil, limit: 0))
+        XCTAssertThrowsError(try TelegramAudioPageRequest(
+            chatID: TestFixtures.chatID,
+            beforeMessageID: nil,
+            limit: TelegramAudioPageRequest.maximumLimit + 1
+        ))
 
-        let page = try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [first, second], nextCursor: 11)
-        XCTAssertEqual(page.nextCursor, 11)
+        let page = try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [newer, older], nextCursor: 10)
+        XCTAssertEqual(page.nextCursor, 10)
         XCTAssertNoThrow(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [], nextCursor: nil))
-        XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [second, first], nextCursor: 10))
-        XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [first, first], nextCursor: 10))
-        XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [first], nextCursor: 11))
+        XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [older, newer], nextCursor: 11))
+        XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [older, older], nextCursor: 10))
+        XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [older], nextCursor: 11))
         XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [], nextCursor: 10))
         let otherChat = try TestFixtures.audio(chatID: TestFixtures.chatID + 1)
         XCTAssertThrowsError(try TelegramAudioPage(chatID: TestFixtures.chatID, messages: [otherChat], nextCursor: 42))

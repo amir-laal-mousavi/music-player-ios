@@ -34,17 +34,17 @@ private actor TelegramGatewaySpy: TelegramGateway {
     }
 
     func loadChats() async throws -> [TelegramChat] {
-        [try TelegramChat(id: TestFixtures.chatID, title: "Fixture chat")]
+        [try TelegramChat(id: TestFixtures.chatID, title: "Fixture chat", kind: .group)]
     }
 
     func loadAudioMessages(_ request: TelegramAudioPageRequest) async throws -> TelegramAudioPage {
         try TelegramAudioPage(
             chatID: request.chatID,
             messages: [
-                try TestFixtures.audio(messageID: 10, chatID: request.chatID),
-                try TestFixtures.audio(messageID: 11, chatID: request.chatID)
+                try TestFixtures.audio(messageID: 11, chatID: request.chatID),
+                try TestFixtures.audio(messageID: 10, chatID: request.chatID)
             ],
-            nextCursor: 11
+            nextCursor: 10
         )
     }
 
@@ -177,11 +177,12 @@ final class ProtocolConformanceTests: XCTestCase {
         XCTAssertEqual(state, .authenticated)
 
         let chats = try await gateway.loadChats()
-        let request = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, afterMessageID: 9, limit: 2)
+        let request = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: 9, limit: 2)
         let page = try await gateway.loadAudioMessages(request)
         XCTAssertEqual(chats.map(\.id), [TestFixtures.chatID])
-        XCTAssertEqual(page.messages.map(\.id), [10, 11])
-        XCTAssertEqual(page.nextCursor, 11)
+        XCTAssertEqual(chats.map(\.kind), [.group])
+        XCTAssertEqual(page.messages.map(\.messageID), [11, 10])
+        XCTAssertEqual(page.nextCursor, 10)
         let audio = try TestFixtures.audio(messageID: 10)
         let url = try await gateway.downloadAudio(audio) { progress in
             XCTAssertEqual(progress.completedBytes, 512)

@@ -5,13 +5,15 @@ enum TestFixtures {
     static let chatID: TelegramChat.ID = -100_123
 
     static func audio(
-        messageID: TelegramAudio.ID = 42,
+        messageID: TelegramAudio.MessageID = 42,
         chatID: TelegramChat.ID = TestFixtures.chatID,
+        fileID: Int32 = 7,
         title: String = "Fixture audio",
         performer: String = "Fixture artist"
     ) throws -> TelegramAudio {
         try TelegramAudio(
             identity: TelegramAudioIdentity(chatID: chatID, messageID: messageID),
+            fileID: fileID,
             fileReference: "test-file-\(chatID)-\(messageID)",
             title: title,
             performer: performer,

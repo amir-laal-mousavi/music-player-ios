@@ -29,6 +29,7 @@ public enum DomainError: Error, Equatable, Sendable {
     case invalidChatIdentifier
     case invalidAudioIdentifier
     case invalidChatTitle
+    case invalidFileIdentifier
     case invalidFileReference
     case invalidFileSize
     case invalidMIMEType
