@@ -25,9 +25,10 @@ private actor TelegramGatewaySpy: TelegramGateway {
     }
 
     func submitPassword(_ password: String) async throws {
+        let nextState = try authState.transition(to: .authenticated)
         self.password = try validatedPassword(password)
         currentAccount = try TestFixtures.account()
-        authState = try authState.transition(to: .authenticated)
+        authState = nextState
     }
 
     func logout() async throws {
@@ -47,13 +48,18 @@ private actor TelegramGatewaySpy: TelegramGateway {
 
     func loadAudioMessages(_ request: TelegramAudioPageRequest) async throws -> TelegramAudioPage {
         try requireAuthentication()
+        let history = try [12, 11, 10, 9].map { messageID in
+            try TestFixtures.audio(messageID: Int64(messageID), chatID: request.chatID)
+        }
+        let olderMessages = history.filter { message in
+            guard let beforeMessageID = request.beforeMessageID else { return true }
+            return message.messageID < beforeMessageID
+        }
+        let messages = Array(olderMessages.prefix(request.limit))
         return try TelegramAudioPage(
             chatID: request.chatID,
-            messages: [
-                try TestFixtures.audio(messageID: 11, chatID: request.chatID),
-                try TestFixtures.audio(messageID: 10, chatID: request.chatID)
-            ],
-            nextCursor: 10
+            messages: messages,
+            nextCursor: messages.last?.messageID
         )
     }
 
@@ -251,6 +257,17 @@ private actor PlayerEngineSpy: PlayerEngine {
 final class ProtocolConformanceTests: XCTestCase {
     func testGatewayRejectsChatAccessBeforeAuthentication() async throws {
         let gateway = TelegramGatewaySpy()
+        XCTAssertThrowsError(try await gateway.submitPassword("test-password")) { error in
+            XCTAssertEqual(
+                error as? DomainError,
+                .invalidStateTransition(
+                    from: String(describing: TelegramAuthState.unauthenticated),
+                    to: String(describing: TelegramAuthState.authenticated)
+                )
+            )
+        }
+        let accountBeforeAuthentication = await gateway.currentAccount
+        XCTAssertNil(accountBeforeAuthentication)
         do {
             _ = try await gateway.loadChats()
             XCTFail("Chat access requires an authenticated account")
@@ -280,6 +297,10 @@ final class ProtocolConformanceTests: XCTestCase {
         XCTAssertEqual(chats.map(\.kind), [.group])
         XCTAssertEqual(page.messages.map(\.messageID), [11, 10])
         XCTAssertEqual(page.nextCursor, 10)
+        let nextRequest = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: 10, limit: 2)
+        let nextPage = try await gateway.loadAudioMessages(nextRequest)
+        XCTAssertEqual(nextPage.messages.map(\.messageID), [9])
+        XCTAssertEqual(nextPage.nextCursor, 9)
         let audio = try TestFixtures.audio(messageID: 10)
         let url = try await gateway.downloadAudio(audio) { progress in
             XCTAssertEqual(progress.completedBytes, 512)
