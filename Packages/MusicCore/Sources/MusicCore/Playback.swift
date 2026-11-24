@@ -83,3 +83,38 @@ public struct PlaybackState: Sendable, Equatable {
         )
     }
 }
+
+public struct PlaybackQueue: Sendable, Equatable {
+    public let tracks: [Track]
+    public let currentIndex: Int
+
+    public var currentTrack: Track { tracks[currentIndex] }
+    public var hasPrevious: Bool { currentIndex > 0 }
+    public var hasNext: Bool { currentIndex + 1 < tracks.count }
+
+    public init(tracks: [Track], currentIndex: Int = 0) throws {
+        guard !tracks.isEmpty,
+              Set(tracks.map(\.id)).count == tracks.count,
+              currentIndex >= 0,
+              currentIndex < tracks.count else {
+            throw DomainError.invalidPlaybackQueue
+        }
+        self.tracks = tracks
+        self.currentIndex = currentIndex
+    }
+
+    public func previous() throws -> PlaybackQueue {
+        guard hasPrevious else { throw DomainError.playback(.queueBoundary) }
+        return PlaybackQueue(uncheckedTracks: tracks, currentIndex: currentIndex - 1)
+    }
+
+    public func next() throws -> PlaybackQueue {
+        guard hasNext else { throw DomainError.playback(.queueBoundary) }
+        return PlaybackQueue(uncheckedTracks: tracks, currentIndex: currentIndex + 1)
+    }
+
+    private init(uncheckedTracks: [Track], currentIndex: Int) {
+        tracks = uncheckedTracks
+        self.currentIndex = currentIndex
+    }
+}

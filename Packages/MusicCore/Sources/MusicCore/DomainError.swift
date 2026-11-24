@@ -20,6 +20,7 @@ public enum PlayerError: Error, Equatable, Sendable {
     case fileUnavailable
     case unsupportedFormat
     case playbackFailed
+    case queueBoundary
 }
 
 public enum DomainError: Error, Equatable, Sendable {
@@ -45,6 +46,7 @@ public enum DomainError: Error, Equatable, Sendable {
     case duplicateImportItem(TelegramAudioIdentity)
     case invalidImportJob
     case invalidPlaybackState
+    case invalidPlaybackQueue
     case invalidStateTransition(from: String, to: String)
     case unauthenticated
     case chatNotFound(TelegramChat.ID)

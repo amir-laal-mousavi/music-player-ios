@@ -156,12 +156,34 @@ private actor LibraryStoreSpy: LibraryStore {
 
 private actor PlayerEngineSpy: PlayerEngine {
     private(set) var state: PlaybackState = .idle
+    private(set) var queue: PlaybackQueue?
 
     nonisolated func observeState() -> AsyncStream<PlaybackState> {
         AsyncStream { $0.finish() }
     }
 
     func play(_ track: Track) async throws {
+        try start(PlaybackQueue(tracks: [track]))
+    }
+
+    func play(_ tracks: [Track], startingAt index: Int) async throws {
+        let nextQueue = try PlaybackQueue(tracks: tracks, currentIndex: index)
+        try start(nextQueue)
+    }
+
+    func previous() async throws {
+        guard let activeQueue = queue else { throw DomainError.playback(.notReady) }
+        try start(try activeQueue.previous())
+    }
+
+    func next() async throws {
+        guard let activeQueue = queue else { throw DomainError.playback(.notReady) }
+        try start(try activeQueue.next())
+    }
+
+    private func start(_ nextQueue: PlaybackQueue) {
+        let track = nextQueue.currentTrack
+        queue = nextQueue
         state = try PlaybackState(status: .loading, currentTrackID: track.id, duration: track.duration)
         state = try PlaybackState(status: .playing, currentTrackID: track.id, duration: track.duration)
     }
@@ -210,6 +232,7 @@ private actor PlayerEngineSpy: PlayerEngine {
 
     func stop() async throws {
         state = .idle
+        queue = nil
     }
 
     func seek(to position: TimeInterval) async throws {
@@ -346,6 +369,80 @@ final class ProtocolConformanceTests: XCTestCase {
         try await store.saveImportJob(active)
         let updated = await iterator.next()
         XCTAssertEqual(updated, [active])
+    }
+
+    func testPlayerMovesThroughTransientQueueWithoutCrossingBoundaries() async throws {
+        let player = PlayerEngineSpy()
+        let tracks = try [10, 11, 12].map { messageID in
+            try TestFixtures.track(
+                audio: TestFixtures.audio(messageID: Int64(messageID))
+            )
+        }
+        try await player.play(tracks, startingAt: 1)
+        var state = await player.state
+        var queue = await player.queue
+        XCTAssertEqual(queue, try PlaybackQueue(tracks: tracks, currentIndex: 1))
+        XCTAssertEqual(state.currentTrackID, tracks[1].id)
+        try await player.seek(to: 25)
+
+        try await player.previous()
+        state = await player.state
+        queue = await player.queue
+        XCTAssertEqual(queue?.currentIndex, 0)
+        XCTAssertEqual(state.currentTrackID, tracks[0].id)
+        XCTAssertEqual(state.position, 0)
+        XCTAssertThrowsError(try await player.previous()) { error in
+            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        }
+
+        try await player.next()
+        try await player.next()
+        state = await player.state
+        queue = await player.queue
+        XCTAssertEqual(queue?.currentIndex, 2)
+        XCTAssertEqual(state.currentTrackID, tracks[2].id)
+        XCTAssertThrowsError(try await player.next()) { error in
+            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        }
+        let stateAtBoundary = await player.state
+        let queueAtBoundary = await player.queue
+        XCTAssertEqual(stateAtBoundary, state)
+        XCTAssertEqual(queueAtBoundary, queue)
+
+        try await player.stop()
+        let stoppedState = await player.state
+        let stoppedQueue = await player.queue
+        XCTAssertEqual(stoppedState, .idle)
+        XCTAssertNil(stoppedQueue)
+    }
+
+    func testPlayerRejectsInvalidQueuesAndSupportsSingleTrackQueue() async throws {
+        let player = PlayerEngineSpy()
+        let track = try TestFixtures.track(audio: TestFixtures.audio())
+        XCTAssertThrowsError(try await player.play([], startingAt: 0)) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        }
+        XCTAssertThrowsError(try await player.play([track, track], startingAt: 0)) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        }
+        XCTAssertThrowsError(try await player.play([track], startingAt: 1)) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        }
+        let rejectedState = await player.state
+        let rejectedQueue = await player.queue
+        XCTAssertEqual(rejectedState, .idle)
+        XCTAssertNil(rejectedQueue)
+
+        try await player.play(track)
+        let singleQueue = await player.queue
+        XCTAssertEqual(singleQueue, try PlaybackQueue(tracks: [track]))
+        XCTAssertThrowsError(try await player.next()) { error in
+            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        }
+        try await player.stop()
+        XCTAssertThrowsError(try await player.previous()) { error in
+            XCTAssertEqual(error as? DomainError, .playback(.notReady))
+        }
     }
 
     func testPlayerPreservesPositionAcrossExplicitInterruptionResume() async throws {

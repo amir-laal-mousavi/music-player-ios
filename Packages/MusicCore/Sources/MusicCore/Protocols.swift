@@ -39,8 +39,16 @@ public protocol LibraryStore: Sendable {
 
 public protocol PlayerEngine: Sendable {
     var state: PlaybackState { get async }
+    /// The transient queue, or nil when no queue is active.
+    var queue: PlaybackQueue? { get async }
     func observeState() -> AsyncStream<PlaybackState>
     func play(_ track: Track) async throws
+    /// Replaces playback with a queue and starts at the given valid index.
+    func play(_ tracks: [Track], startingAt index: Int) async throws
+    /// Starts the previous queue track at zero, or throws at the first track.
+    func previous() async throws
+    /// Starts the next queue track at zero, or throws at the last track.
+    func next() async throws
     func pause() async throws
     /// Resumes paused or interrupted playback from its preserved position.
     func resume() async throws

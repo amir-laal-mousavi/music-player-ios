@@ -74,4 +74,41 @@ final class ProgressAndPlaybackTests: XCTestCase {
         ))
         XCTAssertThrowsError(try PlaybackState(status: .idle, currentTrackID: trackID))
     }
+
+    func testPlaybackQueueValidationAndMovement() throws {
+        let tracks = try [10, 11, 12].map { messageID in
+            try TestFixtures.track(
+                audio: TestFixtures.audio(messageID: Int64(messageID))
+            )
+        }
+        let queue = try PlaybackQueue(tracks: tracks, currentIndex: 1)
+        XCTAssertEqual(queue.tracks, tracks)
+        XCTAssertEqual(queue.currentIndex, 1)
+        XCTAssertEqual(queue.currentTrack, tracks[1])
+        XCTAssertTrue(queue.hasPrevious)
+        XCTAssertTrue(queue.hasNext)
+        XCTAssertEqual(try queue.previous().currentTrack, tracks[0])
+        XCTAssertEqual(try queue.next().currentTrack, tracks[2])
+        XCTAssertFalse(try queue.previous().previous().hasPrevious)
+        XCTAssertFalse(try queue.next().next().hasNext)
+        XCTAssertThrowsError(try queue.previous().previous()) { error in
+            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        }
+        XCTAssertThrowsError(try queue.next().next()) { error in
+            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        }
+
+        XCTAssertThrowsError(try PlaybackQueue(tracks: [])) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        }
+        XCTAssertThrowsError(try PlaybackQueue(tracks: [tracks[0], tracks[0]])) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        }
+        XCTAssertThrowsError(try PlaybackQueue(tracks: tracks, currentIndex: -1)) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        }
+        XCTAssertThrowsError(try PlaybackQueue(tracks: tracks, currentIndex: tracks.count)) { error in
+            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        }
+    }
 }
