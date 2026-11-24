@@ -31,6 +31,7 @@ final class ProgressAndPlaybackTests: XCTestCase {
 
     func testPlaybackStateValidation() throws {
         let trackID = UUID()
+        XCTAssertEqual(PlaybackState.idle, try PlaybackState(status: .idle))
         XCTAssertEqual(PlaybackState.idle.status, .idle)
         XCTAssertNoThrow(try PlaybackState(status: .loading, currentTrackID: trackID, duration: 120))
         XCTAssertNoThrow(try PlaybackState(status: .playing, currentTrackID: trackID, position: 30, duration: 120))

@@ -10,7 +10,13 @@ public enum PlaybackStatus: Sendable, Equatable {
 }
 
 public struct PlaybackState: Sendable, Equatable {
-    public static let idle = PlaybackState(status: .idle)
+    public static let idle = PlaybackState(
+        status: .idle,
+        currentTrackID: nil,
+        position: 0,
+        duration: 0,
+        error: nil
+    )
 
     public let status: PlaybackStatus
     public let currentTrackID: Track.ID?
