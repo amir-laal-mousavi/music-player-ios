@@ -27,7 +27,9 @@ public struct ImportItem: Identifiable, Sendable, Equatable {
         trackID: Track.ID? = nil,
         error: DomainError? = nil
     ) throws {
-        if status == .imported, trackID == nil { throw DomainError.invalidImportItem }
+        if status == .imported || status == .duplicate, trackID == nil {
+            throw DomainError.invalidImportItem
+        }
         if status == .failed, error == nil { throw DomainError.invalidImportItem }
         if status != .failed, error != nil { throw DomainError.invalidImportItem }
         if status != .imported, status != .duplicate, trackID != nil {
@@ -46,8 +48,10 @@ public struct ImportItem: Identifiable, Sendable, Equatable {
             return next == .importing || next == .duplicate || next == .failed || next == .cancelled
         case .importing:
             return next == .imported || next == .duplicate || next == .failed || next == .cancelled
-        case .imported, .duplicate, .failed, .cancelled:
+        case .imported, .duplicate:
             return false
+        case .failed, .cancelled:
+            return next == .waiting
         }
     }
 
@@ -63,10 +67,11 @@ public struct ImportItem: Identifiable, Sendable, Equatable {
                 to: String(describing: next)
             )
         }
+        let nextProgress = next == .waiting ? progress ?? self.progress : progress
         return try ImportItem(
             audio: audio,
             status: next,
-            progress: progress,
+            progress: nextProgress,
             trackID: trackID,
             error: error
         )
@@ -143,13 +148,16 @@ public struct ImportJob: Identifiable, Sendable, Equatable {
              (.paused, .active),
              (.paused, .cancelled),
              (.paused, .waitingToResume),
-             (.waitingToResume, .queued):
+             (.waitingToResume, .queued),
+             (.partialFailure, .queued),
+             (.cancelled, .queued):
             return true
         default:
             return false
         }
     }
 
+    /// Retrying a cancelled or partially failed job resets only unfinished items.
     public func transition(to next: ImportJobStatus, updatedAt: Date = Date()) throws -> Self {
         guard canTransition(to: next) else {
             throw DomainError.invalidStateTransition(
@@ -157,10 +165,19 @@ public struct ImportJob: Identifiable, Sendable, Equatable {
                 to: String(describing: next)
             )
         }
+        var nextItems = items
+        if next == .queued, status == .partialFailure || status == .cancelled {
+            nextItems = try items.map { item in
+                if item.status == .failed || item.status == .cancelled {
+                    return try item.transition(to: .waiting)
+                }
+                return item
+            }
+        }
         return try ImportJob(
             id: id,
             sourceChat: sourceChat,
-            items: items,
+            items: nextItems,
             status: next,
             createdAt: createdAt,
             updatedAt: updatedAt

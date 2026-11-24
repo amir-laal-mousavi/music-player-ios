@@ -74,9 +74,40 @@ private actor TelegramGatewaySpy: TelegramGateway {
 private actor LibraryStoreSpy: LibraryStore {
     private var storedTracks: [Track] = []
     private var jobs: [ImportJob.ID: ImportJob] = [:]
+    private var importJobObservers: [UUID: AsyncStream<[ImportJob]>.Continuation] = [:]
 
     nonisolated func observeTracks() -> AsyncStream<[Track]> {
         AsyncStream { $0.finish() }
+    }
+
+    nonisolated func observeImportJobs() -> AsyncStream<[ImportJob]> {
+        AsyncStream { continuation in
+            let observerID = UUID()
+            Task { await self.addImportJobObserver(id: observerID, continuation: continuation) }
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeImportJobObserver(id: observerID) }
+            }
+        }
+    }
+
+    private func addImportJobObserver(
+        id: UUID,
+        continuation: AsyncStream<[ImportJob]>.Continuation
+    ) {
+        let snapshot = jobs.values.sorted { $0.createdAt > $1.createdAt }
+        if case .terminated = continuation.yield(snapshot) { return }
+        importJobObservers[id] = continuation
+    }
+
+    private func removeImportJobObserver(id: UUID) {
+        importJobObservers[id] = nil
+    }
+
+    private func publishImportJobs() {
+        let snapshot = jobs.values.sorted { $0.createdAt > $1.createdAt }
+        for continuation in importJobObservers.values {
+            continuation.yield(snapshot)
+        }
     }
 
     func tracks() async throws -> [Track] {
@@ -119,6 +150,7 @@ private actor LibraryStoreSpy: LibraryStore {
 
     func saveImportJob(_ job: ImportJob) async throws {
         jobs[job.id] = job
+        publishImportJobs()
     }
 }
 
@@ -274,6 +306,28 @@ final class ProtocolConformanceTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? DomainError, .trackNotFound(track.id))
         }
+    }
+
+    func testStoreEmitsImportJobSnapshots() async throws {
+        let store = LibraryStoreSpy()
+        let stream = store.observeImportJobs()
+        defer { stream.cancel() }
+        var iterator = stream.makeAsyncIterator()
+        let initial = await iterator.next()
+        XCTAssertEqual(initial, [])
+
+        let job = try ImportJob(
+            sourceChat: try TestFixtures.chat(),
+            items: [try ImportItem(audio: TestFixtures.audio())]
+        )
+        try await store.saveImportJob(job)
+        let queued = await iterator.next()
+        XCTAssertEqual(queued, [job])
+
+        let active = try job.transition(to: .active)
+        try await store.saveImportJob(active)
+        let updated = await iterator.next()
+        XCTAssertEqual(updated, [active])
     }
 
     func testPlayerSupportsLocalControlsAndState() async throws {

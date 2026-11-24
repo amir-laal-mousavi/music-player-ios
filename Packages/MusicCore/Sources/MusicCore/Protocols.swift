@@ -30,6 +30,8 @@ public protocol LibraryStore: Sendable {
     func deleteTrack(id: Track.ID) async throws
     /// Returns jobs ordered by createdAt, newest first.
     func importJobs() async throws -> [ImportJob]
+    /// Emits the current jobs and every later saved snapshot.
+    func observeImportJobs() -> AsyncStream<[ImportJob]>
     func importJob(id: ImportJob.ID) async throws -> ImportJob
     /// Replaces the whole persisted job so item progress survives process restarts.
     func saveImportJob(_ job: ImportJob) async throws
