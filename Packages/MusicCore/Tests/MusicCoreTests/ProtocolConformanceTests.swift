@@ -318,7 +318,7 @@ final class ProtocolConformanceTests: XCTestCase {
         XCTAssertEqual(account, try TestFixtures.account())
 
         let chats = try await gateway.loadChats()
-        let request = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: 9, limit: 2)
+        let request = try TelegramAudioPageRequest(chatID: TestFixtures.chatID, beforeMessageID: 12, limit: 2)
         let page = try await gateway.loadAudioMessages(request)
         XCTAssertEqual(chats.map(\.id), [TestFixtures.chatID])
         XCTAssertEqual(chats.map(\.kind), [.group])
