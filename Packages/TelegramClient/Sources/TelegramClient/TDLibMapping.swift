@@ -62,7 +62,8 @@ internal enum TDLibJSON {
             return integer
         }
         if let number = value as? NSNumber, CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID() {
-            return number.int64Value
+            guard let integer = Int64(exactly: number.doubleValue) else { throw invalidResponse }
+            return integer
         }
         throw invalidResponse
     }

@@ -4,6 +4,7 @@ import XCTest
 @testable import TelegramClient
 
 final class TelegramGatewayTests: XCTestCase {
+    private let testDatabaseEncryptionKey = Data(repeating: 0x5A, count: 32)
     private var root: URL!
     private var workspace: URL!
     private var downloadDirectory: URL!
@@ -63,7 +64,8 @@ final class TelegramGatewayTests: XCTestCase {
             apiHash: SyntheticFixtures.apiHash,
             downloadDirectory: downloadDirectory,
             transport: transport,
-            workspaceDirectory: workspace
+            workspaceDirectory: workspace,
+            databaseEncryptionKey: testDatabaseEncryptionKey
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitTdlibParameters"))
         let request = try await transport.nextRequest(ofType: "setTdlibParameters")
@@ -77,6 +79,7 @@ final class TelegramGatewayTests: XCTestCase {
         XCTAssertNil(object["ignore_file_names"])
         XCTAssertNil(object["enable_storage_optimizer"])
         let key = try XCTUnwrap(object["database_encryption_key"] as? String)
+        XCTAssertEqual(key, testDatabaseEncryptionKey.base64EncodedString())
         XCTAssertEqual(try XCTUnwrap(Data(base64Encoded: key)).count, 32)
         try await waitForAuth(.waitingForPhone, from: gateway)
     }
@@ -149,7 +152,8 @@ final class TelegramGatewayTests: XCTestCase {
             apiHash: SyntheticFixtures.apiHash,
             downloadDirectory: downloadDirectory,
             transport: transport,
-            workspaceDirectory: workspace
+            workspaceDirectory: workspace,
+            databaseEncryptionKey: testDatabaseEncryptionKey
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitPhoneNumber"))
         try await waitForAuth(.waitingForPhone, from: gateway)
@@ -338,6 +342,7 @@ final class TelegramGatewayTests: XCTestCase {
             downloadDirectory: downloadDirectory,
             transport: transport,
             workspaceDirectory: workspace,
+            databaseEncryptionKey: testDatabaseEncryptionKey,
             requestTimeout: 0.05
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitPhoneNumber"))
@@ -356,7 +361,8 @@ final class TelegramGatewayTests: XCTestCase {
             apiHash: SyntheticFixtures.apiHash,
             downloadDirectory: downloadDirectory,
             transport: transport,
-            workspaceDirectory: workspace
+            workspaceDirectory: workspace,
+            databaseEncryptionKey: testDatabaseEncryptionKey
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateReady"))
         let request = try await transport.nextRequest(ofType: "getMe")
@@ -379,7 +385,8 @@ final class TelegramGatewayTests: XCTestCase {
             apiHash: SyntheticFixtures.apiHash,
             downloadDirectory: downloadDirectory,
             transport: transport,
-            workspaceDirectory: workspace
+            workspaceDirectory: workspace,
+            databaseEncryptionKey: testDatabaseEncryptionKey
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitPhoneNumber"))
         try await waitForAuth(.waitingForPhone, from: gateway)
@@ -531,14 +538,15 @@ final class TelegramGatewayTests: XCTestCase {
         _ = try await withTimeout { try await task.value }
     }
 
-    func testClosingAuthorizationCancelsActiveDownloadAndRemovesWorkspace() async throws {
+    func testClosingAuthorizationCancelsActiveDownloadAndPreservesWorkspace() async throws {
         let (gateway, transport) = try await makeAuthenticatedGateway(
             additional: { [weak transport] record in
                 guard record.type == "downloadFile" else { return }
                 transport?.respond(SyntheticFixtures.file(size: 12, downloaded: 4), to: record)
-            },
-            ownsWorkspace: true
+            }
         )
+        let marker = workspace.appendingPathComponent("database/session")
+        try Data("synthetic session".utf8).write(to: marker)
         let recorder = ProgressRecorder()
         let audio = try syntheticAudio(size: 12)
         let task = Task { try await gateway.downloadAudio(audio) { recorder.record($0) } }
@@ -551,10 +559,8 @@ final class TelegramGatewayTests: XCTestCase {
         } catch is CancellationError {
         }
         try await waitForAuth(.unauthenticated, from: gateway)
-        for _ in 0..<10_000 where FileManager.default.fileExists(atPath: workspace.path) {
-            await Task.yield()
-        }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.path))
+        XCTAssertEqual(try Data(contentsOf: marker), Data("synthetic session".utf8))
         let account = await gateway.currentAccount
         XCTAssertNil(account)
     }
@@ -621,8 +627,7 @@ final class TelegramGatewayTests: XCTestCase {
     private func makeWaitingGateway(
         user: [String: Any] = SyntheticFixtures.user(),
         additional: @escaping @Sendable (TransportRecord) -> Void = { _ in },
-        requestTimeout: TimeInterval = 2,
-        ownsWorkspace: Bool = false
+        requestTimeout: TimeInterval = 2
     ) throws -> (TelegramGatewayClient, TestTransport) {
         let transport = TestTransport()
         configureAuthentication(transport, user: user, additional: additional)
@@ -632,7 +637,7 @@ final class TelegramGatewayTests: XCTestCase {
             downloadDirectory: downloadDirectory,
             transport: transport,
             workspaceDirectory: workspace,
-            ownsWorkspace: ownsWorkspace,
+            databaseEncryptionKey: testDatabaseEncryptionKey,
             requestTimeout: requestTimeout
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitPhoneNumber"))
@@ -642,14 +647,12 @@ final class TelegramGatewayTests: XCTestCase {
     private func makeAuthenticatedGateway(
         user: [String: Any] = SyntheticFixtures.user(),
         additional: @escaping @Sendable (TransportRecord) -> Void = { _ in },
-        requestTimeout: TimeInterval = 2,
-        ownsWorkspace: Bool = false
+        requestTimeout: TimeInterval = 2
     ) async throws -> (TelegramGatewayClient, TestTransport) {
         let (gateway, transport) = try makeWaitingGateway(
             user: user,
             additional: additional,
-            requestTimeout: requestTimeout,
-            ownsWorkspace: ownsWorkspace
+            requestTimeout: requestTimeout
         )
         try await authenticate(gateway)
         return (gateway, transport)

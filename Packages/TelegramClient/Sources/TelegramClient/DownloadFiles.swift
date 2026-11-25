@@ -1,4 +1,5 @@
 import Foundation
+import MusicCore
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -83,10 +84,10 @@ internal final class SafeDownloadDirectory: @unchecked Sendable {
     ) throws -> StagedDownload {
         try cancellation.withLock {}
         guard source.isFileURL else { throw DomainError.telegram(.downloadFailed) }
-        let canonicalSourceRoot = sourceRoot.resolvingSymlinksInPath().standardizedFileURL
+        let containedSourceRoot = sourceRoot.standardizedFileURL
         let canonicalSource = source.resolvingSymlinksInPath().standardizedFileURL
-        guard canonicalSource != canonicalSourceRoot,
-              canonicalSource.pathComponents.starts(with: canonicalSourceRoot.pathComponents) else {
+        guard canonicalSource != containedSourceRoot,
+              canonicalSource.pathComponents.starts(with: containedSourceRoot.pathComponents) else {
             throw DomainError.telegram(.downloadFailed)
         }
 
@@ -229,7 +230,7 @@ internal enum DownloadFileNaming {
     }
 
     static func sanitizedExtension(_ extension: String?) -> String {
-        guard let fileExtension,
+        guard let fileExtension = fileExtension,
               [".mp3", ".m4a", ".ogg", ".wav", ".flac"].contains(fileExtension) else {
             return ""
         }

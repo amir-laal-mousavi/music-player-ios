@@ -7,8 +7,9 @@ final class DownloadFileTests: XCTestCase {
     private var root: URL!
 
     override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("TelegramDownloadTests-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent("TelegramDownloadTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        root = temporaryRoot.resolvingSymlinksInPath().standardizedFileURL
     }
 
     override func tearDownWithError() throws {

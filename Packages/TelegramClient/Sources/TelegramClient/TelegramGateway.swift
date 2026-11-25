@@ -1,5 +1,8 @@
 import Foundation
 import MusicCore
+#if canImport(Security)
+import Security
+#endif
 
 public actor TelegramGatewayClient: TelegramGateway {
     private let apiID: Int32
@@ -8,7 +11,7 @@ public actor TelegramGatewayClient: TelegramGateway {
     private let downloadDirectory: SafeDownloadDirectory
     private let sourceDirectory: URL
     private let workspaceDirectory: URL
-    private let ownsWorkspace: Bool
+    private var databaseEncryptionKey: Data?
     private let connection: TelegramConnection
     private let requestTimeout: TimeInterval
     private var eventTask: Task<Void, Never>?
@@ -26,23 +29,19 @@ public actor TelegramGatewayClient: TelegramGateway {
     public convenience init(
         apiID: Int32,
         apiHash: String,
-        downloadDirectory: URL
+        downloadDirectory: URL,
+        workspaceDirectory: URL? = nil
     ) throws {
-        let workspace = try Self.makeWorkspace()
-        do {
-            try self.init(
-                apiID: apiID,
-                apiHash: apiHash,
-                downloadDirectory: downloadDirectory,
-                transport: TDLibTransport(),
-                workspaceDirectory: workspace,
-                ownsWorkspace: true,
-                requestTimeout: 30
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: workspace)
-            throw error
-        }
+        let configuration = try Self.persistentWorkspaceConfiguration(workspaceDirectory: workspaceDirectory)
+        try self.init(
+            apiID: apiID,
+            apiHash: apiHash,
+            downloadDirectory: downloadDirectory,
+            transport: TDLibTransport(),
+            workspaceDirectory: configuration.workspace,
+            databaseEncryptionKey: configuration.encryptionKey,
+            requestTimeout: 30
+        )
     }
 #endif
 
@@ -51,25 +50,26 @@ public actor TelegramGatewayClient: TelegramGateway {
         apiHash: String,
         downloadDirectory: URL,
         transport: TelegramTransport,
-        workspaceDirectory: URL? = nil,
-        ownsWorkspace: Bool = false,
+        workspaceDirectory: URL,
+        databaseEncryptionKey: Data,
         requestTimeout: TimeInterval = 2
     ) throws {
         guard apiID > 0,
               !apiHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              databaseEncryptionKey.count == 32,
               requestTimeout.isFinite,
               requestTimeout > 0,
               requestTimeout <= 3_600 else {
             throw DomainError.telegram(.invalidResponse)
         }
-        let workspace = try workspaceDirectory.map { try Self.prepareWorkspace($0) } ?? Self.makeWorkspace()
+        let workspace = try Self.prepareWorkspace(workspaceDirectory)
         let filesDirectory = workspace.appendingPathComponent("files", isDirectory: true)
         self.apiID = apiID
         self.apiHash = apiHash
         self.downloadDirectory = try SafeDownloadDirectory(directory: downloadDirectory)
         self.sourceDirectory = filesDirectory.resolvingSymlinksInPath().standardizedFileURL
         self.workspaceDirectory = workspace
-        self.ownsWorkspace = ownsWorkspace
+        self.databaseEncryptionKey = databaseEncryptionKey
         self.requestTimeout = requestTimeout
         let connection = TelegramConnection(transport: transport)
         self.connection = connection
@@ -273,10 +273,29 @@ public actor TelegramGatewayClient: TelegramGateway {
         _ = try? await download.task.value
     }
 
+    internal static func persistentWorkspaceConfiguration(
+        workspaceDirectory: URL? = nil,
+        loadOrCreateKey: (URL) throws -> Data = databaseEncryptionKey(for:)
+    ) throws -> (workspace: URL, encryptionKey: Data) {
+        let workspace = try workspaceDirectory.map(Self.prepareWorkspace) ?? Self.makeWorkspace()
+        let encryptionKey = try loadOrCreateKey(workspace)
+        guard encryptionKey.count == 32 else { throw DomainError.telegram(.invalidResponse) }
+        return (workspace, encryptionKey)
+    }
+
     private static func makeWorkspace() throws -> URL {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("TelegramClient-\(UUID().uuidString)", isDirectory: true)
+        let workspace = try defaultWorkspaceDirectory()
         return try prepareWorkspace(workspace)
+    }
+
+    internal static func defaultWorkspaceDirectory() throws -> URL {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw DomainError.telegram(.invalidResponse)
+        }
+        return applicationSupport.appendingPathComponent("TelegramClient", isDirectory: true)
     }
 
     private static func prepareWorkspace(_ workspace: URL) throws -> URL {
@@ -288,9 +307,57 @@ public actor TelegramGatewayClient: TelegramGateway {
         )
         try manager.createDirectory(
             at: workspace.appendingPathComponent("files", isDirectory: true),
-            withIntermediateDirectories: true
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
         )
         return workspace.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    internal static func databaseEncryptionKey(for workspace: URL) throws -> Data {
+        #if canImport(Security)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "MusicPlayer.TelegramClient.database",
+            kSecAttrAccount as String: workspace.path,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        func copiedKey(_ status: OSStatus, _ result: CFTypeRef?) throws -> Data {
+            guard status == errSecSuccess,
+                  let data = result as? Data,
+                  data.count == 32 else {
+                throw DomainError.telegram(.invalidResponse)
+            }
+            return data
+        }
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            // TDLib rejects an existing database when its encryption key changes.
+            var bytes = [UInt8](repeating: 0, count: 32)
+            let count = bytes.count
+            let randomStatus = bytes.withUnsafeMutableBytes { buffer in
+                SecRandomCopyBytes(kSecRandomDefault, count, buffer.baseAddress)
+            }
+            guard randomStatus == errSecSuccess else { throw DomainError.telegram(.invalidResponse) }
+            let key = Data(bytes)
+            var item = query
+            item[kSecValueData as String] = key
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let addStatus = SecItemAdd(item as CFDictionary, nil)
+            if addStatus == errSecDuplicateItem {
+                var existing: CFTypeRef?
+                return try copiedKey(SecItemCopyMatching(query as CFDictionary, &existing), existing)
+            }
+            guard addStatus == errSecSuccess else { throw DomainError.telegram(.invalidResponse) }
+            return key
+        }
+        return try copiedKey(status, result)
+        #else
+        throw DomainError.telegram(.invalidResponse)
+        #endif
     }
 
     private func addObserver(
@@ -441,7 +508,7 @@ public actor TelegramGatewayClient: TelegramGateway {
         transition(.failure(domain))
     }
 
-    private func responseObject(_ data: Data, expectedType: String) throws -> [String: Any] {
+    private nonisolated func responseObject(_ data: Data, expectedType: String) throws -> [String: Any] {
         let object = try TDLibJSON.object(from: data)
         guard try TDLibJSON.string(object["@type"]) == expectedType else {
             throw TDLibJSON.invalidResponse
@@ -450,26 +517,28 @@ public actor TelegramGatewayClient: TelegramGateway {
     }
 
     private func sendTDLibParameters() {
-        guard !parametersSent, !stopped, let apiHash else { return }
+        guard !parametersSent, !stopped, let apiHash, let encryptionKey = databaseEncryptionKey else { return }
         parametersSent = true
+        self.apiHash = nil
+        databaseEncryptionKey = nil
+        let workspace = workspaceDirectory
+        let files = sourceDirectory
+        let id = apiID
         Task { [weak self] in
             guard let self else { return }
-            defer { self.apiHash = nil }
             do {
-                var key = [UInt8](repeating: 0, count: 32)
-                for index in key.indices { key[index] = UInt8.random(in: .min ... .max) }
                 let data = try await performRequest(
                     [
                         "@type": "setTdlibParameters",
                         "use_test_dc": false,
-                        "database_directory": workspaceDirectory.appendingPathComponent("database").path,
-                        "files_directory": sourceDirectory.path,
-                        "database_encryption_key": Data(key).base64EncodedString(),
+                        "database_directory": workspace.appendingPathComponent("database").path,
+                        "files_directory": files.path,
+                        "database_encryption_key": encryptionKey.base64EncodedString(),
                         "use_file_database": true,
                         "use_chat_info_database": true,
                         "use_message_database": true,
                         "use_secret_chats": false,
-                        "api_id": apiID,
+                        "api_id": id,
                         "api_hash": apiHash,
                         "system_language_code": "en",
                         "device_model": "iOS",
@@ -508,7 +577,7 @@ public actor TelegramGatewayClient: TelegramGateway {
                 }
                 await self?.finishPendingRequest(
                     extra,
-                    result: .failure(.telegram(.networkUnavailable))
+                    result: .failure(DomainError.telegram(.networkUnavailable))
                 )
             }
             pending.setTimeoutTask(timeoutTask)
@@ -535,7 +604,7 @@ public actor TelegramGatewayClient: TelegramGateway {
             if type == "error" {
                 let code = try TDLibJSON.int32(object["code"])
                 let mapped = code == 404 ? pending.notFound : nil
-                pending.complete(.failure(mapped ?? TDLibMapper.error(code)))
+                pending.complete(.failure(mapped ?? TDLibMapper.error(code: code)))
             } else {
                 pending.complete(.success(try TDLibJSON.encode(object)))
             }
@@ -559,7 +628,7 @@ public actor TelegramGatewayClient: TelegramGateway {
             file = try TDLibJSON.object(object["file"])
             fileID = try TDLibJSON.int32(file["id"])
         } catch {
-            failDownloads(.telegram(.invalidResponse))
+            failDownloads(DomainError.telegram(.invalidResponse))
             return
         }
         let downloads = activeDownloads.values.filter { $0.fileID == fileID }
@@ -584,7 +653,7 @@ public actor TelegramGatewayClient: TelegramGateway {
         cancellation: DownloadCancellationToken,
         events: DownloadEvents,
         progress: @escaping @Sendable (DownloadProgress) -> Void
-    ) async -> URL {
+    ) async throws -> URL {
         var failed = true
         let result: Swift.Result<URL, Error>
         do {
@@ -626,6 +695,7 @@ public actor TelegramGatewayClient: TelegramGateway {
         )
         var current = try fileSnapshot(responseObject(data, expectedType: "file"))
         var reported: DownloadProgress?
+        var iterator = events.stream.makeAsyncIterator()
         while true {
             try cancellation.withLock {}
             try Task.checkCancellation()
@@ -650,7 +720,7 @@ public actor TelegramGatewayClient: TelegramGateway {
                 }
             }
             if current.file.isCompleted { break }
-            guard let update = try await events.stream.next() else {
+            guard let update = try await iterator.next() else {
                 throw DomainError.telegram(.downloadFailed)
             }
             current = update
@@ -747,12 +817,11 @@ public actor TelegramGatewayClient: TelegramGateway {
 
     private func finishTransport() async {
         guard !stopped else { return }
-        await recordFailure(.telegram(.invalidResponse))
+        await recordFailure(DomainError.telegram(.invalidResponse))
         finishPendingRequests()
         stopped = true
         finishObservers()
         await cancelAndAwaitDownloads()
-        cleanupWorkspace()
         connection.close()
     }
 
@@ -773,7 +842,6 @@ public actor TelegramGatewayClient: TelegramGateway {
         stopped = true
         finishObservers()
         await cancelAndAwaitDownloads()
-        cleanupWorkspace()
     }
 
     private func finishPendingRequests(_ error: DomainError = .telegram(.invalidResponse)) {
@@ -786,11 +854,6 @@ public actor TelegramGatewayClient: TelegramGateway {
     private func finishObservers() {
         for continuation in observers.values { continuation.finish() }
         observers.removeAll()
-    }
-
-    private func cleanupWorkspace() {
-        guard ownsWorkspace else { return }
-        try? FileManager.default.removeItem(at: workspaceDirectory)
     }
 }
 
