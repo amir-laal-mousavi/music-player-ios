@@ -4,12 +4,12 @@ import PackageDescription
 
 let package = Package(
     name: "MusicCore",
-    products: [
-        .library(name: "MusicCore", targets: ["MusicCore"])
-    ],
     platforms: [
         .iOS(.v13),
         .macOS(.v10_15)
+    ],
+    products: [
+        .library(name: "MusicCore", targets: ["MusicCore"])
     ],
     targets: [
         .target(name: "MusicCore"),
