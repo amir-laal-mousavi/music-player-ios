@@ -23,6 +23,7 @@ final class TelegramGatewayTests: XCTestCase {
     func testPhoneCodePasswordLoginAndMaskedAccount() async throws {
         let (gateway, transport) = try makeWaitingGateway()
         defer { transport.setHandler { _ in } }
+        try await waitForAuth(.waitingForPhone, from: gateway)
         try await gateway.submitPhone(SyntheticFixtures.phoneNumber)
         try await waitForAuth(.waitingForCode, from: gateway)
         try await gateway.submitCode(String(repeating: "1", count: 6))
@@ -228,6 +229,7 @@ final class TelegramGatewayTests: XCTestCase {
         let (gateway, _) = try makeWaitingGateway(
             user: ["@type": "user", "id": "not-an-integer"]
         )
+        try await waitForAuth(.waitingForPhone, from: gateway)
         try await gateway.submitPhone(SyntheticFixtures.phoneNumber)
         try await waitForAuth(.waitingForCode, from: gateway)
         try await gateway.submitCode(String(repeating: "1", count: 6))
@@ -379,8 +381,7 @@ final class TelegramGatewayTests: XCTestCase {
             downloadDirectory: downloadDirectory,
             transport: transport,
             workspaceDirectory: workspace,
-            databaseEncryptionKey: testDatabaseEncryptionKey,
-            requestTimeout: 0.05
+            databaseEncryptionKey: testDatabaseEncryptionKey
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitPhoneNumber"))
         try await waitForAuth(.waitingForPhone, from: gateway)
@@ -399,7 +400,8 @@ final class TelegramGatewayTests: XCTestCase {
             downloadDirectory: downloadDirectory,
             transport: transport,
             workspaceDirectory: workspace,
-            databaseEncryptionKey: testDatabaseEncryptionKey
+            databaseEncryptionKey: testDatabaseEncryptionKey,
+            requestTimeout: 4
         )
         try transport.emit(SyntheticFixtures.authUpdate("authorizationStateReady"))
         let request = try await transport.nextRequest(ofType: "getMe")
@@ -698,6 +700,7 @@ final class TelegramGatewayTests: XCTestCase {
     }
 
     private func authenticate(_ gateway: TelegramGatewayClient) async throws {
+        try await waitForAuth(.waitingForPhone, from: gateway)
         try await gateway.submitPhone(SyntheticFixtures.phoneNumber)
         try await waitForAuth(.waitingForCode, from: gateway)
         try await gateway.submitCode(String(repeating: "1", count: 6))
