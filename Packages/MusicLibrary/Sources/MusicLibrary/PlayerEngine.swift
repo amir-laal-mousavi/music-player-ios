@@ -528,7 +528,7 @@ actor AVPlayerBacking: PlaybackBacking {
             guard duration.isFinite, duration >= 0 else { return }
             emit(generation, .ready(duration: duration))
         case .failed:
-            let playerError: PlayerError = errorCode == AVError.Code.fileFormatUnsupported.rawValue
+            let playerError: PlayerError = errorCode == AVError.Code.formatUnsupported.rawValue
                 ? .unsupportedFormat : .fileUnavailable
             emit(generation, .failed(playerError))
         case .unknown:

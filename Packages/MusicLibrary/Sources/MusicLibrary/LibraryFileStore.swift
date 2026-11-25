@@ -234,7 +234,7 @@ public actor LibraryFileStore {
         guard parentFD >= 0 else { return }
         defer { close(parentFD) }
         var current = stat()
-        guard fstatat(parentFD, sourceURL.lastPathComponent, &current, AT_SYMLINK_NOFOLLOW) == 0,
+        guard Darwin.fstatat(parentFD, sourceURL.lastPathComponent, &current, AT_SYMLINK_NOFOLLOW) == 0,
               current.st_dev == sourceInfo.st_dev, current.st_ino == sourceInfo.st_ino else { return }
         _ = unlinkat(parentFD, sourceURL.lastPathComponent, 0)
     }
