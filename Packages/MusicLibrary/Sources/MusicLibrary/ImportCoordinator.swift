@@ -50,8 +50,7 @@ public actor ImportCoordinator {
             return try job.transition(to: .pausing, updatedAt: self.timestamp(after: job.updatedAt))
         }
         pendingJobIDs.removeAll { $0 == jobID }
-        let taskToken = taskTokens[jobID]
-        let task = taskToken.flatMap { tasks[$0] }
+        let task = tasks[jobID]
         task?.cancel()
         if let item = pausing.items.first(where: { $0.status == .importing }) {
             await gateway.cancelDownload(for: item.id)
@@ -62,8 +61,8 @@ public actor ImportCoordinator {
     }
 
     public func resume(jobID: ImportJob.ID) async throws -> ImportJob {
-        let taskToken = taskTokens[jobID]
-        if let taskToken { await tasks[taskToken]?.value }
+        let task = tasks[jobID]
+        await task?.value
         let resumable = try await changeJob(jobID) { job in
             let resumable: ImportJob
             switch job.status {
@@ -116,8 +115,7 @@ public actor ImportCoordinator {
             )
         }
         pendingJobIDs.removeAll { $0 == jobID }
-        let taskToken = taskTokens[jobID]
-        let task = taskToken.flatMap { tasks[$0] }
+        let task = tasks[jobID]
         task?.cancel()
         if let item = previous.items.first(where: { $0.status == .importing }) {
             await gateway.cancelDownload(for: item.id)
@@ -128,8 +126,8 @@ public actor ImportCoordinator {
     }
 
     public func retry(jobID: ImportJob.ID) async throws -> ImportJob {
-        let taskToken = taskTokens[jobID]
-        if let taskToken { await tasks[taskToken]?.value }
+        let task = tasks[jobID]
+        await task?.value
         let queued = try await changeJob(jobID) { job in
             try job.transition(to: .queued, updatedAt: self.timestamp(after: job.updatedAt))
         }
