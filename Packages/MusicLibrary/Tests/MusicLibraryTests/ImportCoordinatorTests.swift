@@ -31,6 +31,27 @@ final class ImportCoordinatorTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).allSatisfy { !$0.hasSuffix(".download") })
     }
 
+    func testJobImportsMultipleItemsWithSeparateDownloadAttempts() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let gateway = FakeTelegramGateway(directory: root)
+        let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+
+        let queued = try await coordinator.enqueue(
+            [TestSupport.audio(messageID: 1), TestSupport.audio(messageID: 2)],
+            from: TestSupport.chat
+        )
+        let completed = try await coordinator.wait(for: queued.id)
+
+        await assertEqual(completed.status, .completed)
+        await assertEqual(completed.items.map(\.status), [.imported, .imported])
+        await assertEqual(await gateway.downloadCount, 2)
+        await assertEqual(await gateway.cancellationCount, 0)
+        await assertEqual(try await store.tracks().count, 2)
+    }
+
     func testExistingIdentityIsDuplicateWithoutDownloading() async throws {
         let root = try TestSupport.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -161,6 +182,7 @@ final class ImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(paused.items.first?.status, .waiting)
         XCTAssertEqual(paused.items.first?.progress?.completedBytes, 2)
         await assertTrue(await gateway.cancelledDownloads.contains(audio.identity))
+        await assertEqual(await gateway.cancellationCount, 1)
 
         _ = try await coordinator.resume(jobID: queued.id)
         await assertEqual(await starts.next(), audio.identity)
@@ -168,6 +190,49 @@ final class ImportCoordinatorTests: XCTestCase {
         let completed = try await coordinator.wait(for: queued.id)
         XCTAssertEqual(completed.status, .completed)
         XCTAssertEqual(completed.items.first?.status, .imported)
+        await assertEqual(await gateway.cancellationCount, 1)
+    }
+
+    func testDelayedCancellationFromOldAttemptCannotCancelRestartedDownload() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let gateway = FakeTelegramGateway(directory: root)
+        let audio = TestSupport.audio()
+        await gateway.setDeferred(true, for: audio.identity)
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
+        let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+
+        let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
+        await assertEqual(await starts.next(), audio.identity)
+        _ = try await coordinator.pause(jobID: queued.id)
+        await assertEqual(await gateway.cancellationCount, 1)
+
+        _ = try await coordinator.resume(jobID: queued.id)
+        await assertEqual(await starts.next(), audio.identity)
+        // Resume replaced the task token, so the old attempt can only reach this guard as stale.
+        let staleCancellation = await coordinator.requestCancellation(
+            jobID: queued.id,
+            token: UUID(),
+            identity: audio.identity
+        )
+        await staleCancellation?.value
+
+        let cancellations = await gateway.cancellationCount
+        await assertEqual(cancellations, 1)
+        if cancellations != 1 {
+            _ = try? await coordinator.cancel(jobID: queued.id)
+            return
+        }
+        let active = try await store.importJob(id: queued.id)
+        await assertEqual(active.status, .active)
+        await assertEqual(active.items.first?.status, .importing)
+
+        try await gateway.completeDownload(for: audio.identity)
+        let completed = try await coordinator.wait(for: queued.id)
+        await assertEqual(completed.status, .completed)
+        await assertEqual(await gateway.cancellationCount, 1)
     }
 
     func testOutOfOrderProgressCannotRegressImportingItem() async throws {
@@ -251,6 +316,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let cancelled = try await coordinator.cancel(jobID: queued.id)
         XCTAssertEqual(cancelled.status, .cancelled)
         XCTAssertEqual(cancelled.items.first?.status, .cancelled)
+        await assertEqual(await gateway.cancellationCount, 1)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: audioRoot.path), [])
 
         await gateway.setDeferred(false, for: audio.identity)
@@ -259,6 +325,7 @@ final class ImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(completed.id, queued.id)
         XCTAssertEqual(completed.status, .completed)
         XCTAssertEqual(completed.items.first?.status, .imported)
+        await assertEqual(await gateway.cancellationCount, 1)
     }
 
     func testDuplicateAppearingDuringDownloadRemovesNewCopy() async throws {
@@ -496,9 +563,11 @@ final class ImportCoordinatorTests: XCTestCase {
 
         await assertEqual(await starts.next(), audio.identity)
         await assertEqual(await gateway.downloadCount, 2)
+        await assertEqual(await gateway.cancellationCount, 1)
         await assertTrue(await gateway.cancelledDownloads.contains(audio.identity))
         let completed = try await coordinator.wait(for: queued.id)
         await assertEqual(completed.status, .completed)
+        await assertEqual(await gateway.cancellationCount, 1)
     }
 
     func testMetadataDeleteFailureKeepsOfflineFile() async throws {

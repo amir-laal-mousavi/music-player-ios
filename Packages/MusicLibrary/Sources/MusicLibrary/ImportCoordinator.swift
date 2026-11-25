@@ -13,6 +13,13 @@ public actor ImportCoordinator {
     private var isRecovering = false
     private var progressTasks: [ImportJob.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var mutationTail: (token: UUID, task: Task<Void, Never>)?
+    private var activeDownloads: [ImportJob.ID: ActiveDownload] = [:]
+
+    private struct ActiveDownload {
+        let token: UUID
+        let identity: TelegramAudioIdentity
+        var cancellation: Task<Void, Never>? = nil
+    }
 
     public init(
         gateway: any TelegramGateway,
@@ -40,7 +47,7 @@ public actor ImportCoordinator {
     }
 
     public func pause(jobID: ImportJob.ID) async throws -> ImportJob {
-        let pausing = try await changeJob(jobID) { job in
+        _ = try await changeJob(jobID) { job in
             guard job.status == .active else {
                 throw DomainError.invalidStateTransition(
                     from: String(describing: job.status),
@@ -50,12 +57,7 @@ public actor ImportCoordinator {
             return try job.transition(to: .pausing, updatedAt: self.timestamp(after: job.updatedAt))
         }
         pendingJobIDs.removeAll { $0 == jobID }
-        let task = tasks[jobID]
-        task?.cancel()
-        if let item = pausing.items.first(where: { $0.status == .importing }) {
-            await gateway.cancelDownload(for: item.id)
-        }
-        await task?.value
+        await stop(jobID)
         await waitForProgressTasks(jobID)
         return try await finishPause(jobID)
     }
@@ -84,8 +86,7 @@ public actor ImportCoordinator {
     }
 
     public func cancel(jobID: ImportJob.ID) async throws -> ImportJob {
-        let previous = try await store.importJob(id: jobID)
-        let cancelled = try await changeJob(jobID) { job in
+        _ = try await changeJob(jobID) { job in
             guard [ImportJobStatus.queued, .active, .pausing, .paused, .waitingToResume].contains(job.status) else {
                 throw DomainError.invalidStateTransition(
                     from: String(describing: job.status),
@@ -115,12 +116,7 @@ public actor ImportCoordinator {
             )
         }
         pendingJobIDs.removeAll { $0 == jobID }
-        let task = tasks[jobID]
-        task?.cancel()
-        if let item = previous.items.first(where: { $0.status == .importing }) {
-            await gateway.cancelDownload(for: item.id)
-        }
-        await task?.value
+        await stop(jobID)
         await waitForProgressTasks(jobID)
         return try await store.importJob(id: jobID)
     }
@@ -141,9 +137,9 @@ public actor ImportCoordinator {
             isRecovering = false
             startNextJob()
         }
-        let runningTasks = tasks.values
-        for task in runningTasks { task.cancel() }
-        for task in runningTasks { await task.value }
+        let runningTasks = tasks
+        for task in runningTasks.values { task.cancel() }
+        for jobID in runningTasks.keys { await stop(jobID) }
 
         let jobs = try await store.importJobs()
         let tracks = try await store.tracks()
@@ -213,8 +209,72 @@ public actor ImportCoordinator {
         tasks[jobID] = Task { await self.run(jobID, token: token) }
     }
 
-    private func finishJob(_ jobID: ImportJob.ID, token: UUID) {
+    private func startDownload(
+        jobID: ImportJob.ID,
+        token: UUID,
+        identity: TelegramAudioIdentity
+    ) -> Bool {
+        guard taskTokens[jobID] == token, activeDownloads[jobID] == nil else { return false }
+        activeDownloads[jobID] = ActiveDownload(token: token, identity: identity)
+        return true
+    }
+
+    @discardableResult
+    func requestCancellation(
+        jobID: ImportJob.ID,
+        token: UUID,
+        identity: TelegramAudioIdentity
+    ) -> Task<Void, Never>? {
+        guard taskTokens[jobID] == token,
+              var download = activeDownloads[jobID],
+              download.token == token,
+              download.identity == identity else { return nil }
+        if download.cancellation == nil {
+            let gateway = self.gateway
+            download.cancellation = Task { await gateway.cancelDownload(for: identity) }
+            activeDownloads[jobID] = download
+        }
+        return download.cancellation
+    }
+
+    private func finishDownload(
+        jobID: ImportJob.ID,
+        token: UUID,
+        identity: TelegramAudioIdentity
+    ) async {
+        guard taskTokens[jobID] == token,
+              var download = activeDownloads[jobID],
+              download.token == token,
+              download.identity == identity else { return }
+        if Task.isCancelled {
+            download.cancellation = requestCancellation(jobID: jobID, token: token, identity: identity)
+        }
+        await download.cancellation?.value
+        guard taskTokens[jobID] == token,
+              activeDownloads[jobID]?.token == token,
+              activeDownloads[jobID]?.identity == identity else { return }
+        activeDownloads[jobID] = nil
+    }
+
+    private func stop(_ jobID: ImportJob.ID) async {
+        let task = tasks[jobID]
+        let token = taskTokens[jobID]
+        let download = activeDownloads[jobID]
+        task?.cancel()
+        if let token, let download, download.token == token,
+           let cancellation = requestCancellation(jobID: jobID, token: token, identity: download.identity) {
+            await cancellation.value
+        }
+        await task?.value
+    }
+
+    private func finishJob(_ jobID: ImportJob.ID, token: UUID) async {
         guard taskTokens[jobID] == token else { return }
+        if let download = activeDownloads[jobID], download.token == token {
+            await download.cancellation?.value
+        }
+        guard taskTokens[jobID] == token else { return }
+        activeDownloads[jobID] = nil
         tasks[jobID] = nil
         taskTokens[jobID] = nil
         if activeJobID == jobID { activeJobID = nil }
@@ -276,9 +336,11 @@ public actor ImportCoordinator {
     }
 
     private func run(_ jobID: ImportJob.ID, token: UUID) async {
-        defer {
-            finishJob(jobID, token: token)
-        }
+        await runJob(jobID, token: token)
+        await finishJob(jobID, token: token)
+    }
+
+    private func runJob(_ jobID: ImportJob.ID, token: UUID) async {
         do {
             var job = try await store.importJob(id: jobID)
             if job.status == .queued || job.status == .paused {
@@ -307,7 +369,7 @@ public actor ImportCoordinator {
                 if item.status == .imported || item.status == .duplicate { continue }
                 if item.status == .failed || item.status == .cancelled { continue }
                 do {
-                    try await importItem(latest, index: index)
+                    try await importItem(latest, index: index, token: token)
                 } catch is CancellationError {
                     try? await settleCancellation(jobID)
                     return
@@ -327,7 +389,7 @@ public actor ImportCoordinator {
         }
     }
 
-    private func importItem(_ job: ImportJob, index: Int) async throws {
+    private func importItem(_ job: ImportJob, index: Int, token: UUID) async throws {
         var current = try await store.importJob(id: job.id)
         guard current.status == .active else { return }
         current = try await changeJob(job.id) { latest in
@@ -358,13 +420,24 @@ public actor ImportCoordinator {
         try Task.checkCancellation()
 
         let gateway = self.gateway
-        let downloadedURL = try await withTaskCancellationHandler {
-            try await gateway.downloadAudio(item.audio) { progress in
-                Task { [weak self] in await self?.recordProgress(job.id, identity: item.id, progress: progress) }
-            }
-        } onCancel: {
-            Task { await gateway.cancelDownload(for: item.id) }
+        guard startDownload(jobID: job.id, token: token, identity: item.id) else {
+            throw CancellationError()
         }
+        let downloadedURL: URL
+        do {
+            downloadedURL = try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                return try await gateway.downloadAudio(item.audio) { progress in
+                    Task { [weak self] in await self?.recordProgress(job.id, identity: item.id, progress: progress) }
+                }
+            } onCancel: {
+                Task { _ = await self.requestCancellation(jobID: job.id, token: token, identity: item.id) }
+            }
+        } catch {
+            await finishDownload(jobID: job.id, token: token, identity: item.id)
+            throw error
+        }
+        await finishDownload(jobID: job.id, token: token, identity: item.id)
 
         let localURL = try await fileStore.importDownloadedFile(
             for: item.audio,

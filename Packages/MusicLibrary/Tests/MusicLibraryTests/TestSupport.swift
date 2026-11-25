@@ -59,6 +59,7 @@ actor FakeTelegramGateway: TelegramGateway {
     private var errors: [TelegramAudioIdentity: TelegramGatewayError] = [:]
     private var deferred: Set<TelegramAudioIdentity> = []
     private var cancelled: Set<TelegramAudioIdentity> = []
+    private var cancellationRequests = 0
     private var activeCancellations: Set<TelegramAudioIdentity> = []
     private var pending: [TelegramAudioIdentity: CheckedContinuation<URL, Error>] = [:]
     private var progressHandlers: [TelegramAudioIdentity: @Sendable (DownloadProgress) -> Void] = [:]
@@ -71,6 +72,7 @@ actor FakeTelegramGateway: TelegramGateway {
     var startedDownloads: AsyncStream<TelegramAudioIdentity> { started }
     var downloadCount: Int { downloaded.count }
     var cancelledDownloads: Set<TelegramAudioIdentity> { cancelled }
+    var cancellationCount: Int { cancellationRequests }
 
     var authState: TelegramAuthState { authentication }
     var currentAccount: TelegramAccount? { nil }
@@ -122,20 +124,17 @@ actor FakeTelegramGateway: TelegramGateway {
         progress(try! DownloadProgress(totalBytes: 4, completedBytes: 2))
         if let error = errors[audio.identity] { throw error }
         guard deferred.contains(audio.identity) else { return try makeSource(for: audio) }
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                pending[audio.identity] = continuation
-                if activeCancellations.contains(audio.identity) {
-                    pending[audio.identity] = nil
-                    continuation.resume(throwing: CancellationError())
-                }
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[audio.identity] = continuation
+            if activeCancellations.contains(audio.identity) {
+                pending[audio.identity] = nil
+                continuation.resume(throwing: CancellationError())
             }
-        } onCancel: {
-            Task { await self.cancelDownload(for: audio.identity) }
         }
     }
 
     func cancelDownload(for identity: TelegramAudioIdentity) async {
+        cancellationRequests += 1
         cancelled.insert(identity)
         activeCancellations.insert(identity)
         pending.removeValue(forKey: identity)?.resume(throwing: CancellationError())
