@@ -494,7 +494,8 @@ final class ImportCoordinatorTests: XCTestCase {
 
         try await coordinator.recover()
 
-        try await eventually { await gateway.downloadCount == 2 }
+        await assertEqual(await starts.next(), audio.identity)
+        await assertEqual(await gateway.downloadCount, 2)
         await assertTrue(await gateway.cancelledDownloads.contains(audio.identity))
         let completed = try await coordinator.wait(for: queued.id)
         await assertEqual(completed.status, .completed)
