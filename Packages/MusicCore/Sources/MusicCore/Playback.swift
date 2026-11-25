@@ -17,7 +17,7 @@ public enum PlaybackStatus: Sendable, Equatable {
 
 public struct PlaybackState: Sendable, Equatable {
     public static let idle = PlaybackState(
-        status: .idle,
+        uncheckedStatus: .idle,
         currentTrackID: nil,
         position: 0,
         duration: 0,
@@ -31,13 +31,13 @@ public struct PlaybackState: Sendable, Equatable {
     public let error: DomainError?
 
     private init(
-        status: PlaybackStatus,
+        uncheckedStatus: PlaybackStatus,
         currentTrackID: Track.ID?,
         position: TimeInterval,
         duration: TimeInterval,
         error: DomainError?
     ) {
-        self.status = status
+        self.status = uncheckedStatus
         self.currentTrackID = currentTrackID
         self.position = position
         self.duration = duration
@@ -75,7 +75,7 @@ public struct PlaybackState: Sendable, Equatable {
             guard error != nil else { throw DomainError.invalidPlaybackState }
         }
         self.init(
-            status: status,
+            uncheckedStatus: status,
             currentTrackID: currentTrackID,
             position: position,
             duration: duration,

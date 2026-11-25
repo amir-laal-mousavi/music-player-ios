@@ -43,7 +43,7 @@ public struct ImportItem: Identifiable, Sendable, Equatable {
     }
 
     public func canTransition(to next: ImportItemStatus) -> Bool {
-        switch self {
+        switch status {
         case .waiting:
             return next == .importing || next == .duplicate || next == .failed || next == .cancelled
         case .importing:
