@@ -29,7 +29,8 @@ final class TelegramGatewayTests: XCTestCase {
         try await waitForAuth(.waitingForPassword, from: gateway)
         try await gateway.submitPassword(SyntheticFixtures.password)
         try await waitForAuth(.authenticated, from: gateway)
-        let account = try XCTUnwrap(await gateway.currentAccount)
+        let currentAccount = await gateway.currentAccount
+        let account = try XCTUnwrap(currentAccount)
         XCTAssertEqual(account.maskedPhoneNumber, String(repeating: "•", count: 8) + String(repeating: "0", count: 4))
         let state = await gateway.authState
         XCTAssertEqual(state, .authenticated)
@@ -120,12 +121,12 @@ final class TelegramGatewayTests: XCTestCase {
 
     func testChatsAndBackwardAudioHistory() async throws {
         let chatID = -Int64(String(repeating: "1", count: 6))!
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             switch record.type {
             case "getChats":
-                transport?.respond(["@type": "chats", "total_count": 1, "chat_ids": [String(chatID)]], to: record)
+                transport.respond(["@type": "chats", "total_count": 1, "chat_ids": [String(chatID)]], to: record)
             case "getChat":
-                transport?.respond(
+                transport.respond(
                     SyntheticFixtures.chat(
                         id: chatID,
                         title: "Synthetic channel",
@@ -138,7 +139,7 @@ final class TelegramGatewayTests: XCTestCase {
                 let messages: [Any] = before == 0
                     ? [SyntheticFixtures.audioMessage(id: 20, chatID: chatID), SyntheticFixtures.audioMessage(id: 10, chatID: chatID)]
                     : [SyntheticFixtures.audioMessage(id: 5, chatID: chatID)]
-                transport?.respond(["@type": "messages", "messages": messages], to: record)
+                transport.respond(["@type": "messages", "messages": messages], to: record)
             default:
                 break
             }
@@ -162,13 +163,13 @@ final class TelegramGatewayTests: XCTestCase {
     }
 
     func testHistorySkipsNonAudioBatchesWithoutLosingOlderAudio() async throws {
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "getChatHistory" else { return }
             let before = record.object["from_message_id"] as? Int ?? 0
             let messages: [Any] = before == 0
                 ? [SyntheticFixtures.textMessage(id: 20, chatID: 1)]
                 : (before == 20 ? [SyntheticFixtures.audioMessage(id: 10, chatID: 1)] : [])
-            transport?.respond(["@type": "messages", "messages": messages], to: record)
+            transport.respond(["@type": "messages", "messages": messages], to: record)
         }
         let request = try TelegramAudioPageRequest(chatID: 1, beforeMessageID: nil, limit: 2)
         let page = try await gateway.loadAudioMessages(request)
@@ -199,8 +200,8 @@ final class TelegramGatewayTests: XCTestCase {
     }
 
     func testMissingChatMapsToExistingDomainError() async throws {
-        let (gateway, _) = try await makeAuthenticatedGateway { [weak transport] record in
-            if record.type == "getChatHistory" { transport?.respondError(code: 404, to: record) }
+        let (gateway, _) = try await makeAuthenticatedGateway { transport, record in
+            if record.type == "getChatHistory" { transport.respondError(code: 404, to: record) }
         }
         let request = try TelegramAudioPageRequest(chatID: 1, beforeMessageID: nil, limit: 10)
         await assertDomainError(.chatNotFound(1)) {
@@ -209,10 +210,10 @@ final class TelegramGatewayTests: XCTestCase {
     }
 
     func testLogoutClearsAccountAndEndsUnauthenticated() async throws {
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "logOut" else { return }
-            transport?.respondOK(to: record)
-            try? transport?.emit(SyntheticFixtures.authUpdate("authorizationStateClosed"))
+            transport.respondOK(to: record)
+            try? transport.emit(SyntheticFixtures.authUpdate("authorizationStateClosed"))
         }
         try await gateway.logout()
         try await waitForAuth(.unauthenticated, from: gateway)
@@ -252,9 +253,9 @@ final class TelegramGatewayTests: XCTestCase {
         try FileManager.default.createDirectory(at: filesDirectory, withIntermediateDirectories: true)
         let source = filesDirectory.appendingPathComponent("tdlib-cache")
         try payload.write(to: source)
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
-            transport?.respond(
+            transport.respond(
                 SyntheticFixtures.file(size: Int64(payload.count), path: source.path, completed: true, downloaded: Int64(payload.count)),
                 to: record
             )
@@ -278,7 +279,9 @@ final class TelegramGatewayTests: XCTestCase {
         XCTAssertTrue(destination.lastPathComponent.hasSuffix(".mp3"))
         XCTAssertFalse(destination.lastPathComponent.contains("must-not"))
         XCTAssertEqual(try Data(contentsOf: destination), payload)
-        XCTAssertEqual(recorder.snapshot().last, DownloadProgress(totalBytes: Int64(payload.count), completedBytes: Int64(payload.count)))
+        let progress = recorder.snapshot()
+        let expectedProgress = try DownloadProgress(totalBytes: Int64(payload.count), completedBytes: Int64(payload.count))
+        XCTAssertEqual(progress.last, expectedProgress)
         let downloadRequest = try XCTUnwrap(transport.sentRecords().first { $0.type == "downloadFile" })
         XCTAssertEqual(downloadRequest.object["offset"] as? Int, 0)
         XCTAssertEqual(downloadRequest.object["limit"] as? Int, 0)
@@ -290,9 +293,9 @@ final class TelegramGatewayTests: XCTestCase {
         let outside = workspace.appendingPathComponent("outside-cache")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         try Data("outside".utf8).write(to: outside)
-        let (gateway, _) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, _) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
-            transport?.respond(SyntheticFixtures.file(size: 7, path: outside.path, completed: true, downloaded: 7), to: record)
+            transport.respond(SyntheticFixtures.file(size: 7, path: outside.path, completed: true, downloaded: 7), to: record)
         }
         let audio = try syntheticAudio(size: 7)
         await assertDomainError(.telegram(.downloadFailed)) {
@@ -306,9 +309,9 @@ final class TelegramGatewayTests: XCTestCase {
         try FileManager.default.createDirectory(at: filesDirectory, withIntermediateDirectories: true)
         let source = filesDirectory.appendingPathComponent("tdlib-cache")
         try Data("bad".utf8).write(to: source)
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
-            transport?.respond(SyntheticFixtures.file(size: 12, path: source.path, completed: true, downloaded: 3), to: record)
+            transport.respond(SyntheticFixtures.file(size: 12, path: source.path, completed: true, downloaded: 3), to: record)
         }
         await assertDomainError(.telegram(.downloadFailed)) {
             _ = try await gateway.downloadAudio(try syntheticAudio(size: 12)) { _ in }
@@ -318,9 +321,9 @@ final class TelegramGatewayTests: XCTestCase {
     }
 
     func testDownloadCancellationCleansPartialFilesAndTDLibCache() async throws {
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
-            transport?.respond(SyntheticFixtures.file(size: 12, path: "", completed: false, downloaded: 0), to: record)
+            transport.respond(SyntheticFixtures.file(size: 12, path: "", completed: false, downloaded: 0), to: record)
         }
         let recorder = ProgressRecorder()
         let audio = try syntheticAudio(size: 12)
@@ -346,9 +349,9 @@ final class TelegramGatewayTests: XCTestCase {
     }
 
     func testInactiveIncompleteSynchronousDownloadFails() async throws {
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
-            transport?.respond(
+            transport.respond(
                 SyntheticFixtures.file(size: 12, completed: false, active: false, downloaded: 4),
                 to: record
             )
@@ -433,7 +436,7 @@ final class TelegramGatewayTests: XCTestCase {
         let (gateway, transport) = try await makeAuthenticatedGateway()
         let sent = XCTestExpectation(description: "All history requests sent")
         sent.expectedFulfillmentCount = 20
-        transport.setHandler { [weak transport] record in
+        transport.setHandler { record in
             guard record.type == "getChatHistory" else { return }
             sent.fulfill()
         }
@@ -489,9 +492,9 @@ final class TelegramGatewayTests: XCTestCase {
     }
 
     func testDownloadRejectsRegressiveProgress() async throws {
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
-            transport?.respond(SyntheticFixtures.file(size: 12, downloaded: 4), to: record)
+            transport.respond(SyntheticFixtures.file(size: 12, downloaded: 4), to: record)
         }
         let recorder = ProgressRecorder()
         let audio = try syntheticAudio(size: 12)
@@ -509,7 +512,8 @@ final class TelegramGatewayTests: XCTestCase {
         await assertDomainError(.telegram(.invalidResponse)) {
             _ = try await task.value
         }
-        XCTAssertEqual(recorder.snapshot().map(\.completedBytes), [4, 8])
+        let progress = recorder.snapshot()
+        XCTAssertEqual(progress.map(\.completedBytes), [4, 8])
     }
 
     func testUnknownDownloadSizeRemainsNilThroughCompletion() async throws {
@@ -518,9 +522,9 @@ final class TelegramGatewayTests: XCTestCase {
         try FileManager.default.createDirectory(at: filesDirectory, withIntermediateDirectories: true)
         let source = filesDirectory.appendingPathComponent("unknown-size-cache")
         try payload.write(to: source)
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
-            transport?.respond(
+            transport.respond(
                 SyntheticFixtures.file(
                     size: 0,
                     path: source.path,
@@ -539,7 +543,8 @@ final class TelegramGatewayTests: XCTestCase {
         )
         let recorder = ProgressRecorder()
         _ = try await gateway.downloadAudio(audio) { recorder.record($0) }
-        let last = try XCTUnwrap(recorder.snapshot().last)
+        let progress = recorder.snapshot()
+        let last = try XCTUnwrap(progress.last)
         XCTAssertNil(last.totalBytes)
         XCTAssertEqual(last.completedBytes, Int64(payload.count))
     }
@@ -551,7 +556,7 @@ final class TelegramGatewayTests: XCTestCase {
         let source = filesDirectory.appendingPathComponent("slow-cache")
         try payload.write(to: source)
         let (gateway, transport) = try await makeAuthenticatedGateway(
-            additional: { _ in },
+            additional: { _, _ in },
             requestTimeout: 0.2
         )
         let audio = try syntheticAudio(size: Int64(payload.count))
@@ -574,9 +579,9 @@ final class TelegramGatewayTests: XCTestCase {
 
     func testClosingAuthorizationCancelsActiveDownloadAndPreservesWorkspace() async throws {
         let (gateway, transport) = try await makeAuthenticatedGateway(
-            additional: { [weak transport] record in
+            additional: { transport, record in
                 guard record.type == "downloadFile" else { return }
-                transport?.respond(SyntheticFixtures.file(size: 12, downloaded: 4), to: record)
+                transport.respond(SyntheticFixtures.file(size: 12, downloaded: 4), to: record)
             }
         )
         let marker = workspace.appendingPathComponent("database/session")
@@ -605,10 +610,10 @@ final class TelegramGatewayTests: XCTestCase {
         let payload = Data(repeating: 0x2A, count: 12)
         let source = filesDirectory.appendingPathComponent("second-cache")
         try payload.write(to: source)
-        let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in
+        let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "downloadFile" else { return }
             let fileID = Int32(exactly: record.object["file_id"] as? Int ?? 0) ?? 0
-            transport?.respond(SyntheticFixtures.file(id: fileID, size: 12, downloaded: 4), to: record)
+            transport.respond(SyntheticFixtures.file(id: fileID, size: 12, downloaded: 4), to: record)
         }
         let firstAudio = try syntheticAudio(size: 12)
         let secondAudio = try TelegramAudio(
@@ -660,7 +665,7 @@ final class TelegramGatewayTests: XCTestCase {
 
     private func makeWaitingGateway(
         user: [String: Any] = SyntheticFixtures.user(),
-        additional: @escaping @Sendable (TransportRecord) -> Void = { _ in },
+        additional: @escaping @Sendable (TestTransport, TransportRecord) -> Void = { _, _ in },
         requestTimeout: TimeInterval = 2
     ) throws -> (TelegramGatewayClient, TestTransport) {
         let transport = TestTransport()
@@ -680,7 +685,7 @@ final class TelegramGatewayTests: XCTestCase {
 
     private func makeAuthenticatedGateway(
         user: [String: Any] = SyntheticFixtures.user(),
-        additional: @escaping @Sendable (TransportRecord) -> Void = { _ in },
+        additional: @escaping @Sendable (TestTransport, TransportRecord) -> Void = { _, _ in },
         requestTimeout: TimeInterval = 2
     ) async throws -> (TelegramGatewayClient, TestTransport) {
         let (gateway, transport) = try makeWaitingGateway(
@@ -704,23 +709,24 @@ final class TelegramGatewayTests: XCTestCase {
     private func configureAuthentication(
         _ transport: TestTransport,
         user: [String: Any],
-        additional: @escaping @Sendable (TransportRecord) -> Void
+        additional: @escaping @Sendable (TestTransport, TransportRecord) -> Void
     ) {
         transport.setHandler { [weak transport] record in
+            guard let transport else { return }
             switch record.type {
             case "setAuthenticationPhoneNumber":
-                transport?.respondOK(to: record)
-                try? transport?.emit(SyntheticFixtures.authUpdate("authorizationStateWaitCode"))
+                transport.respondOK(to: record)
+                try? transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitCode"))
             case "checkAuthenticationCode":
-                transport?.respondOK(to: record)
-                try? transport?.emit(SyntheticFixtures.authUpdate("authorizationStateWaitPassword"))
+                transport.respondOK(to: record)
+                try? transport.emit(SyntheticFixtures.authUpdate("authorizationStateWaitPassword"))
             case "checkAuthenticationPassword":
-                transport?.respondOK(to: record)
-                try? transport?.emit(SyntheticFixtures.authUpdate("authorizationStateReady"))
+                transport.respondOK(to: record)
+                try? transport.emit(SyntheticFixtures.authUpdate("authorizationStateReady"))
             case "getMe":
-                transport?.respond(user, to: record)
+                transport.respond(user, to: record)
             default:
-                additional(record)
+                additional(transport, record)
             }
         }
     }

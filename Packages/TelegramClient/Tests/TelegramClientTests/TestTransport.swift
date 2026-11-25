@@ -107,7 +107,7 @@ internal final class TestTransport: TelegramTransport, @unchecked Sendable {
 
     func nextRequest(ofType type: String) async throws -> TransportRecord {
         try await withTimeout {
-            for await record in requests where record.type == type {
+            for await record in self.requests where record.type == type {
                 return record
             }
             throw TestFailure.timedOut

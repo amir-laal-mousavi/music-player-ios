@@ -28,7 +28,7 @@ final class TDLibMappingTests: XCTestCase {
         let update = SyntheticFixtures.authUpdate("authorizationStateReady")
         let state = try TDLibMapper.authorizationStateObject(from: update)
         XCTAssertEqual(try TDLibMapper.authState(from: state), .authenticated)
-        XCTAssertTrue(TDLibMapper.isAuthorizationClosed(SyntheticFixtures.encoded(
+        XCTAssertTrue(TDLibMapper.isAuthorizationClosed(try SyntheticFixtures.encoded(
             SyntheticFixtures.authUpdate("authorizationStateClosed")
         )))
     }
@@ -132,7 +132,7 @@ final class TDLibMappingTests: XCTestCase {
         XCTAssertEqual(oldest, 10)
     }
 
-    func testAudioPageRejectsInvalidMetadataThroughMusicCore() {
+    func testAudioPageRejectsInvalidMetadataThroughMusicCore() throws {
         let request = try TelegramAudioPageRequest(chatID: 1, beforeMessageID: nil, limit: 10)
         XCTAssertThrowsError(try TDLibMapper.page(
             messages: [SyntheticFixtures.audioMessage(id: 1, chatID: 1, size: -1)],
@@ -163,13 +163,13 @@ final class TDLibMappingTests: XCTestCase {
     func testProgressUsesExpectedSizeAndClampsToKnownTotal() throws {
         var object = SyntheticFixtures.file(size: 0, downloaded: 20)
         object["expected_size"] = 12
-        XCTAssertEqual(try TDLibMapper.progress(from: object), DownloadProgress(totalBytes: 12, completedBytes: 12))
+        XCTAssertEqual(try TDLibMapper.progress(from: object), try DownloadProgress(totalBytes: 12, completedBytes: 12))
         let unknown = SyntheticFixtures.file(size: 0, downloaded: 3)
-        XCTAssertEqual(try TDLibMapper.progress(from: unknown), DownloadProgress(totalBytes: nil, completedBytes: 3))
+        XCTAssertEqual(try TDLibMapper.progress(from: unknown), try DownloadProgress(totalBytes: nil, completedBytes: 3))
         let file = try TDLibMapper.file(from: SyntheticFixtures.file(size: 12, downloaded: 20))
         XCTAssertEqual(
             try TDLibMapper.progress(file: file, knownTotal: 10),
-            DownloadProgress(totalBytes: 10, completedBytes: 10)
+            try DownloadProgress(totalBytes: 10, completedBytes: 10)
         )
     }
 
