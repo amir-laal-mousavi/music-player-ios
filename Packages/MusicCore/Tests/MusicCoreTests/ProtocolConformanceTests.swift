@@ -109,7 +109,7 @@ private actor LibraryStoreSpy: LibraryStore {
         importJobObservers[id] = nil
     }
 
-    private func finishImportJobObservation() {
+    func finishImportJobObservation() {
         for continuation in importJobObservers.values {
             continuation.finish()
         }
@@ -194,7 +194,7 @@ private actor PlayerEngineSpy: PlayerEngine {
         try start(try activeQueue.next())
     }
 
-    private func start(_ nextQueue: PlaybackQueue) {
+    private func start(_ nextQueue: PlaybackQueue) throws {
         let track = nextQueue.currentTrack
         queue = nextQueue
         state = try PlaybackState(status: .loading, currentTrackID: track.id, duration: track.duration)
