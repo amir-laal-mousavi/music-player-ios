@@ -124,7 +124,7 @@ internal final class SafeDownloadDirectory: @unchecked Sendable {
             try cancellation.withLock {}
             let count = buffer.withUnsafeMutableBytes { bytes -> Int in
                 guard let base = bytes.baseAddress else { return -1 }
-                return read(sourceDescriptor, base, buffer.count)
+                return read(sourceDescriptor, base, bytes.count)
             }
             if count == 0 { break }
             if count < 0 {
