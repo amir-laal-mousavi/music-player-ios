@@ -245,7 +245,7 @@ final class PlayerEngineTests: XCTestCase {
             return await iterator.next()
         }
         read.cancel()
-        XCTAssertNil(await read.value)
+        await assertNil(read.value)
 
         await engine.addStateObserver(id: UUID(), continuation: continuation)
 

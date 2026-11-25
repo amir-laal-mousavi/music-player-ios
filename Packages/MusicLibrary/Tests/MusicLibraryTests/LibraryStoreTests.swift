@@ -54,7 +54,7 @@ final class LibraryStoreTests: XCTestCase {
             return await iterator.next()
         }
         trackRead.cancel()
-        XCTAssertNil(await trackRead.value)
+        await assertNil(trackRead.value)
         await store.addTrackObserver(UUID(), continuation: trackContinuation)
         await assertEqual(await store.trackObserverCount, 0)
 
@@ -64,7 +64,7 @@ final class LibraryStoreTests: XCTestCase {
             return await iterator.next()
         }
         jobRead.cancel()
-        XCTAssertNil(await jobRead.value)
+        await assertNil(jobRead.value)
         await store.addJobObserver(UUID(), continuation: jobContinuation)
         await assertEqual(await store.jobObserverCount, 0)
     }
