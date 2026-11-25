@@ -1,0 +1,18 @@
+name: MusicCore tests
+
+on:
+  push:
+    paths:
+      - "Packages/**"
+      - ".github/workflows/packages.yml"
+  pull_request:
+    paths:
+      - "Packages/**"
+      - ".github/workflows/packages.yml"
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path Packages/MusicCore
