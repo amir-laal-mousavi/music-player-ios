@@ -47,7 +47,7 @@ public struct ImportItem: Identifiable, Sendable, Equatable {
         case .waiting:
             return next == .importing || next == .duplicate || next == .failed || next == .cancelled
         case .importing:
-            return next == .imported || next == .duplicate || next == .failed || next == .cancelled
+            return next == .waiting || next == .imported || next == .duplicate || next == .failed || next == .cancelled
         case .imported, .duplicate:
             return false
         case .failed, .cancelled:
@@ -168,7 +168,7 @@ public struct ImportJob: Identifiable, Sendable, Equatable {
         var nextItems = items
         if next == .queued, status == .partialFailure || status == .cancelled {
             nextItems = try items.map { item in
-                if item.status == .failed || item.status == .cancelled {
+                if item.status == .failed || item.status == .cancelled || item.status == .importing {
                     return try item.transition(to: .waiting)
                 }
                 return item

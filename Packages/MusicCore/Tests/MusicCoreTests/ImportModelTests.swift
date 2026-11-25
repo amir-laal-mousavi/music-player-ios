@@ -12,6 +12,7 @@ final class ImportModelTests: XCTestCase {
         (.waiting, .duplicate),
         (.waiting, .failed),
         (.waiting, .cancelled),
+        (.importing, .waiting),
         (.importing, .imported),
         (.importing, .duplicate),
         (.importing, .failed),
@@ -72,13 +73,17 @@ final class ImportModelTests: XCTestCase {
     func testRetryResetsOnlyUnfinishedImportItems() throws {
         let importedAudio = try TestFixtures.audio(messageID: 1)
         let duplicateAudio = try TestFixtures.audio(messageID: 2)
-        let failedAudio = try TestFixtures.audio(messageID: 3)
-        let cancelledAudio = try TestFixtures.audio(messageID: 4)
+        let waitingAudio = try TestFixtures.audio(messageID: 3)
+        let importingAudio = try TestFixtures.audio(messageID: 4)
+        let failedAudio = try TestFixtures.audio(messageID: 5)
+        let cancelledAudio = try TestFixtures.audio(messageID: 6)
         let importedTrackID = UUID()
         let duplicateTrackID = UUID()
         let progress = try DownloadProgress(totalBytes: 10, completedBytes: 4)
         let imported = try ImportItem(audio: importedAudio, status: .imported, trackID: importedTrackID)
         let duplicate = try ImportItem(audio: duplicateAudio, status: .duplicate, trackID: duplicateTrackID)
+        let waiting = try ImportItem(audio: waitingAudio, progress: progress)
+        let importing = try ImportItem(audio: importingAudio, status: .importing, progress: progress)
         let failed = try ImportItem(
             audio: failedAudio,
             status: .failed,
@@ -86,7 +91,7 @@ final class ImportModelTests: XCTestCase {
             error: .telegram(.networkUnavailable)
         )
         let cancelled = try ImportItem(audio: cancelledAudio, status: .cancelled, progress: progress)
-        let items = [imported, duplicate, failed, cancelled]
+        let items = [imported, duplicate, waiting, importing, failed, cancelled]
         let createdAt = Date(timeIntervalSince1970: 100)
 
         for status in [ImportJobStatus.partialFailure, .cancelled] {
@@ -101,14 +106,35 @@ final class ImportModelTests: XCTestCase {
             XCTAssertEqual(retried.status, .queued)
             XCTAssertEqual(retried.items.map(\.id), items.map(\.id))
             XCTAssertEqual(Set(retried.items.map(\.id)).count, items.count)
-            XCTAssertEqual(retried.items.map(\.status), [.imported, .duplicate, .waiting, .waiting])
+            XCTAssertEqual(
+                retried.items.map(\.status),
+                [.imported, .duplicate, .waiting, .waiting, .waiting, .waiting]
+            )
             XCTAssertEqual(retried.items[0], imported)
             XCTAssertEqual(retried.items[1], duplicate)
-            XCTAssertEqual(retried.items[2].progress, progress)
-            XCTAssertEqual(retried.items[3].progress, progress)
-            XCTAssertTrue(retried.items[2...].allSatisfy { $0.trackID == nil && $0.error == nil })
+            XCTAssertEqual(retried.items[2], waiting)
+            XCTAssertTrue(retried.items[3...].allSatisfy { $0.progress == progress })
+            XCTAssertTrue(retried.items[3...].allSatisfy { $0.trackID == nil && $0.error == nil })
             XCTAssertEqual(retried.createdAt, createdAt)
         }
+    }
+
+    func testActiveJobCancellationRetryResetsStuckImportingItem() throws {
+        let audio = try TestFixtures.audio()
+        let progress = try DownloadProgress(totalBytes: 10, completedBytes: 4)
+        let importing = try ImportItem(audio: audio, status: .importing, progress: progress)
+        let job = try ImportJob(sourceChat: try TestFixtures.chat(), items: [importing], status: .active)
+
+        let cancelled = try job.transition(to: .cancelled)
+        let retried = try cancelled.transition(to: .queued)
+
+        XCTAssertEqual(retried.status, .queued)
+        XCTAssertEqual(retried.items.count, 1)
+        XCTAssertEqual(retried.items[0].audio, audio)
+        XCTAssertEqual(retried.items[0].status, .waiting)
+        XCTAssertEqual(retried.items[0].progress, progress)
+        XCTAssertNil(retried.items[0].trackID)
+        XCTAssertNil(retried.items[0].error)
     }
 
     func testImportJobPersistsSourceAndValidatesOrdering() throws {
