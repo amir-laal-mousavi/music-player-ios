@@ -87,14 +87,16 @@ final class ProgressAndPlaybackTests: XCTestCase {
         XCTAssertEqual(queue.currentTrack, tracks[1])
         XCTAssertTrue(queue.hasPrevious)
         XCTAssertTrue(queue.hasNext)
-        XCTAssertEqual(try queue.previous().currentTrack, tracks[0])
-        XCTAssertEqual(try queue.next().currentTrack, tracks[2])
-        XCTAssertFalse(try queue.previous().previous().hasPrevious)
-        XCTAssertFalse(try queue.next().next().hasNext)
-        XCTAssertThrowsError(try queue.previous().previous()) { error in
+        let firstQueue = try queue.previous()
+        XCTAssertEqual(firstQueue.currentTrack, tracks[0])
+        XCTAssertFalse(firstQueue.hasPrevious)
+        XCTAssertThrowsError(try firstQueue.previous()) { error in
             XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
         }
-        XCTAssertThrowsError(try queue.next().next()) { error in
+        let lastQueue = try queue.next()
+        XCTAssertEqual(lastQueue.currentTrack, tracks[2])
+        XCTAssertFalse(lastQueue.hasNext)
+        XCTAssertThrowsError(try lastQueue.next()) { error in
             XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
         }
 

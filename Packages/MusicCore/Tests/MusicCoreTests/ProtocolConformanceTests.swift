@@ -16,6 +16,7 @@ private actor TelegramGatewaySpy: TelegramGateway {
 
     func submitPhone(_ phone: String) async throws {
         self.phone = try validatedPhoneNumber(phone)
+        authState = try authState.transition(to: .waitingForPhone)
         authState = try authState.transition(to: .waitingForCode)
     }
 
@@ -25,6 +26,12 @@ private actor TelegramGatewaySpy: TelegramGateway {
     }
 
     func submitPassword(_ password: String) async throws {
+        guard authState == .waitingForPassword else {
+            throw DomainError.invalidStateTransition(
+                from: String(describing: authState),
+                to: String(describing: TelegramAuthState.authenticated)
+            )
+        }
         let nextState = try authState.transition(to: .authenticated)
         self.password = try validatedPassword(password)
         currentAccount = try TestFixtures.account()
