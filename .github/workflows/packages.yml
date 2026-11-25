@@ -1,4 +1,4 @@
-name: MusicCore tests
+name: Package tests
 
 on:
   push:
@@ -13,6 +13,19 @@ on:
 jobs:
   test:
     runs-on: macos-latest
+    strategy:
+      matrix:
+        package:
+          - MusicCore
+          - TelegramClient
+          - MusicLibrary
     steps:
       - uses: actions/checkout@v4
-      - run: swift test --package-path Packages/MusicCore
+      - env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          if [ -f "Packages/$PACKAGE/Package.swift" ]; then
+            swift test --package-path "Packages/$PACKAGE"
+          else
+            echo "Skipping $PACKAGE: package not present"
+          fi
