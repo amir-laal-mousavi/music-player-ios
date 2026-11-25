@@ -192,7 +192,101 @@ final class PlayerEngineTests: XCTestCase {
         await assertEqual(await iterator.next()?.status, .paused)
     }
 
+    func testNewLoadKeepsAutoplayWhenEarlierResumeFinishes() async throws {
+        let backing = FakePlaybackBacking()
+        await backing.setAutomaticReady(false)
+        let engine = try makeEngine(backing: backing)
+        try await engine.play(TestSupport.track(messageID: 1))
+        await backing.emitReady()
+        try await eventually { await engine.state.status == .playing }
+        try await engine.pause()
+
+        await backing.gateNextPlay()
+        let resumeTask = Task { try await engine.resume() }
+        try await eventually { await backing.isPlaybackGated }
+        let secondTrack = TestSupport.track(messageID: 2)
+        try await engine.play(secondTrack)
+        await backing.releasePlay()
+        _ = try await resumeTask.value
+
+        await backing.emitReady()
+        try await eventually {
+            let state = await engine.state
+            return state.status == .playing && state.currentTrackID == secondTrack.id
+        }
+    }
+
+    func testStaleAutoplayFailureCannotFailNewLoad() async throws {
+        let backing = FakePlaybackBacking()
+        await backing.setAutomaticReady(false)
+        let engine = try makeEngine(backing: backing)
+        await backing.gateNextPlay()
+        await backing.failNextPlay(.playbackFailed)
+        try await engine.play(TestSupport.track(messageID: 1))
+        await backing.emitReady()
+        try await eventually { await backing.isPlaybackGated }
+
+        let secondTrack = TestSupport.track(messageID: 2)
+        try await engine.play(secondTrack)
+        await backing.releasePlay()
+        await backing.emitReady()
+
+        try await eventually {
+            let state = await engine.state
+            return state.status == .playing && state.currentTrackID == secondTrack.id
+        }
+    }
+
+    func testCancelledStateObserverIsNotRetainedWhenRegistered() async throws {
+        let engine = try makeEngine()
+        let (stream, continuation) = AsyncStream<PlaybackState>.makeStream()
+        let read = Task { await stream.makeAsyncIterator().next() }
+        read.cancel()
+        XCTAssertNil(await read.value)
+
+        await engine.addStateObserver(id: UUID(), continuation: continuation)
+
+        await assertEqual(await engine.stateObserverCount, 0)
+    }
+
+    func testLatePlayingEventCannotUndoPauseOrInterruption() async throws {
+        let backing = FakePlaybackBacking()
+        let engine = try makeEngine(backing: backing)
+        let track = TestSupport.track()
+        try await engine.play(track)
+        try await eventually { await engine.state.status == .playing }
+
+        try await engine.pause()
+        await backing.emitPlaying()
+        for _ in 0..<100 { await Task.yield() }
+        await assertEqual(await engine.state.status, .paused)
+
+        try await engine.resume()
+        try await engine.interrupt(reason: .audioSession)
+        await backing.emitPlaying()
+        for _ in 0..<100 { await Task.yield() }
+        await assertEqual(await engine.state.status, .interrupted(.audioSession))
+        await assertEqual(await engine.state.currentTrackID, track.id)
+    }
+
+    func testEngineReleasesBackingEventTaskOnDeinit() async throws {
+        let box = WeakBackingBox()
+        do {
+            let backing = FakePlaybackBacking()
+            box.value = backing
+            _ = try makeEngine(backing: backing)
+        }
+        for _ in 0..<1_000 where box.value != nil {
+            await Task.yield()
+        }
+        XCTAssertNil(box.value)
+    }
+
     private func makeEngine(backing: FakePlaybackBacking = FakePlaybackBacking()) throws -> AVFoundationPlayerEngine {
         try AVFoundationPlayerEngine(backing: backing, configureAudioSession: {})
     }
+}
+
+private final class WeakBackingBox: @unchecked Sendable {
+    weak var value: FakePlaybackBacking?
 }

@@ -46,6 +46,23 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(updated, [track])
     }
 
+    func testCancelledObserversAreNotRetainedWhenRegistered() async throws {
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let (trackStream, trackContinuation) = AsyncStream<[Track]>.makeStream()
+        let trackRead = Task { await trackStream.makeAsyncIterator().next() }
+        trackRead.cancel()
+        XCTAssertNil(await trackRead.value)
+        await store.addTrackObserver(UUID(), continuation: trackContinuation)
+        await assertEqual(await store.trackObserverCount, 0)
+
+        let (jobStream, jobContinuation) = AsyncStream<[ImportJob]>.makeStream()
+        let jobRead = Task { await jobStream.makeAsyncIterator().next() }
+        jobRead.cancel()
+        XCTAssertNil(await jobRead.value)
+        await store.addJobObserver(UUID(), continuation: jobContinuation)
+        await assertEqual(await store.jobObserverCount, 0)
+    }
+
     func testJobsRoundTripNewestFirstAndObserveWholeReplacement() async throws {
         let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
         let older = try job(id: UUID(), messageID: 1, createdAt: 100)

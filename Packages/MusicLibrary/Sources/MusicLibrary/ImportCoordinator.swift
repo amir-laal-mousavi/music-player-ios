@@ -8,6 +8,9 @@ public actor ImportCoordinator {
     private let now: @Sendable () -> Date
     private var tasks: [ImportJob.ID: Task<Void, Never>] = [:]
     private var taskTokens: [ImportJob.ID: UUID] = [:]
+    private var pendingJobIDs: [ImportJob.ID] = []
+    private var activeJobID: ImportJob.ID?
+    private var isRecovering = false
     private var progressTasks: [ImportJob.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var mutationTail: (token: UUID, task: Task<Void, Never>)?
 
@@ -46,17 +49,21 @@ public actor ImportCoordinator {
             }
             return try job.transition(to: .pausing, updatedAt: timestamp(after: job.updatedAt))
         }
-        let task = taskTokens[jobID].flatMap { tasks[$0] }
+        pendingJobIDs.removeAll { $0 == jobID }
+        let taskToken = taskTokens[jobID]
+        let task = taskToken.flatMap { tasks[$0] }
         task?.cancel()
         if let item = pausing.items.first(where: { $0.status == .importing }) {
             await gateway.cancelDownload(for: item.id)
         }
         await task?.value
         await waitForProgressTasks(jobID)
-        return try await store.importJob(id: jobID)
+        return try await finishPause(jobID)
     }
 
     public func resume(jobID: ImportJob.ID) async throws -> ImportJob {
+        let taskToken = taskTokens[jobID]
+        if let taskToken { await tasks[taskToken]?.value }
         let resumable = try await changeJob(jobID) { job in
             let resumable: ImportJob
             switch job.status {
@@ -108,7 +115,9 @@ public actor ImportCoordinator {
                 updatedAt: timestamp(after: normalized.updatedAt)
             )
         }
-        let task = taskTokens[jobID].flatMap { tasks[$0] }
+        pendingJobIDs.removeAll { $0 == jobID }
+        let taskToken = taskTokens[jobID]
+        let task = taskToken.flatMap { tasks[$0] }
         task?.cancel()
         if let item = previous.items.first(where: { $0.status == .importing }) {
             await gateway.cancelDownload(for: item.id)
@@ -119,6 +128,8 @@ public actor ImportCoordinator {
     }
 
     public func retry(jobID: ImportJob.ID) async throws -> ImportJob {
+        let taskToken = taskTokens[jobID]
+        if let taskToken { await tasks[taskToken]?.value }
         let queued = try await changeJob(jobID) { job in
             try job.transition(to: .queued, updatedAt: timestamp(after: job.updatedAt))
         }
@@ -127,12 +138,31 @@ public actor ImportCoordinator {
     }
 
     public func recover() async throws {
-        try await fileStore.cleanupPartials()
-        for job in try await store.importJobs() {
+        isRecovering = true
+        defer {
+            isRecovering = false
+            startNextJob()
+        }
+        let runningTasks = tasks.values
+        for task in runningTasks { task.cancel() }
+        for task in runningTasks { await task.value }
+
+        let jobs = try await store.importJobs()
+        let tracks = try await store.tracks()
+        try await fileStore.cleanupOrphanedFiles(referencedBy: Set(tracks.map(\.localURL)))
+        pendingJobIDs.removeAll()
+        for job in jobs.reversed() {
             switch job.status {
-            case .active:
+            case .active, .waitingToResume:
                 _ = try await changeJob(job.id) { current in
+                    guard current.status == .active || current.status == .waitingToResume else { return current }
                     let normalized = try resetImportingItems(current)
+                    if normalized.status == .waitingToResume {
+                        return try normalized.transition(
+                            to: .queued,
+                            updatedAt: timestamp(after: normalized.updatedAt)
+                        )
+                    }
                     let waiting = try normalized.transition(
                         to: .waitingToResume,
                         updatedAt: timestamp(after: normalized.updatedAt)
@@ -144,12 +174,7 @@ public actor ImportCoordinator {
                 }
                 start(job.id)
             case .pausing:
-                _ = try await changeJob(job.id) { current in
-                    try resetImportingItems(current).transition(
-                        to: .paused,
-                        updatedAt: timestamp(after: current.updatedAt)
-                    )
-                }
+                _ = try await finishPause(job.id)
             case .queued:
                 start(job.id)
             default:
@@ -169,15 +194,42 @@ public actor ImportCoordinator {
 
     public func deleteTrack(id: Track.ID) async throws {
         let track = try await store.track(id: id)
-        try await fileStore.deleteFile(at: track.localURL)
         try await store.deleteTrack(id: id)
+        try await fileStore.deleteFile(at: track.localURL)
     }
 
     private func start(_ jobID: ImportJob.ID) {
-        guard tasks[jobID] == nil else { return }
+        guard tasks[jobID] == nil,
+              activeJobID != jobID,
+              !pendingJobIDs.contains(jobID) else { return }
+        pendingJobIDs.append(jobID)
+        startNextJob()
+    }
+
+    private func startNextJob() {
+        guard !isRecovering, activeJobID == nil, let jobID = pendingJobIDs.first else { return }
+        pendingJobIDs.removeFirst()
         let token = UUID()
+        activeJobID = jobID
         taskTokens[jobID] = token
         tasks[jobID] = Task { await self.run(jobID, token: token) }
+    }
+
+    private func finishJob(_ jobID: ImportJob.ID, token: UUID) {
+        guard taskTokens[jobID] == token else { return }
+        tasks[jobID] = nil
+        taskTokens[jobID] = nil
+        if activeJobID == jobID { activeJobID = nil }
+        startNextJob()
+    }
+
+    private func finishPause(_ jobID: ImportJob.ID) async throws -> ImportJob {
+        _ = try await changeJob(jobID) { job in
+            guard job.status == .pausing else { return job }
+            let normalized = try resetImportingItems(job)
+            return try normalized.transition(to: .paused, updatedAt: timestamp(after: normalized.updatedAt))
+        }
+        return try await store.importJob(id: jobID)
     }
 
     private func saveNewJob(_ job: ImportJob) async throws {
@@ -227,10 +279,7 @@ public actor ImportCoordinator {
 
     private func run(_ jobID: ImportJob.ID, token: UUID) async {
         defer {
-            if taskTokens[jobID] == token {
-                tasks[jobID] = nil
-                taskTokens[jobID] = nil
-            }
+            finishJob(jobID, token: token)
         }
         do {
             var job = try await store.importJob(id: jobID)
@@ -319,7 +368,11 @@ public actor ImportCoordinator {
             Task { await gateway.cancelDownload(for: item.id) }
         }
 
-        let localURL = try await fileStore.importDownloadedFile(for: item.audio, at: downloadedURL)
+        let localURL = try await fileStore.importDownloadedFile(
+            for: item.audio,
+            at: downloadedURL,
+            removingSourceOnSuccess: true
+        )
         var insertedTrackID: Track.ID?
         do {
             try Task.checkCancellation()
@@ -364,7 +417,12 @@ public actor ImportCoordinator {
             }
         } catch {
             if let insertedTrackID {
-                try? await store.deleteTrack(id: insertedTrackID)
+                do {
+                    try await store.deleteTrack(id: insertedTrackID)
+                } catch {
+                    // Recovery can account for the promoted file if metadata rollback fails.
+                    throw error
+                }
             }
             try? await fileStore.deleteFile(at: localURL)
             throw error

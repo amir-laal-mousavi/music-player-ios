@@ -5,7 +5,7 @@ import MusicCore
 protocol PlaybackBacking: Sendable {
     var events: AsyncStream<PlaybackBackingEvent> { get }
     var currentPosition: TimeInterval? { get async }
-    func load(url: URL, autoplay: Bool, generation: UInt64) async throws
+    func load(url: URL, generation: UInt64) async throws
     func play() async throws
     func pause() async throws
     func seek(to position: TimeInterval) async throws
@@ -79,6 +79,13 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         #endif
     }
 
+    deinit {
+        eventTask?.cancel()
+        notificationTask?.cancel()
+    }
+
+    var stateObserverCount: Int { stateObservers.count }
+
     public nonisolated func observeState() -> AsyncStream<PlaybackState> {
         AsyncStream { continuation in
             let id = UUID()
@@ -149,8 +156,9 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         pendingAutoplay = true
         do {
             try await backing.play()
-            guard controlGeneration == token,
-                  state.status == .paused || isInterrupted(state.status) else { return }
+            guard controlGeneration == token else { return }
+            pendingAutoplay = false
+            guard state.status == .paused || isInterrupted(state.status) else { return }
             publish(try PlaybackState(
                 status: .playing,
                 currentTrackID: state.currentTrackID,
@@ -245,7 +253,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
             duration: queue.currentTrack.duration
         ))
         do {
-            try await backing.load(url: queue.currentTrack.localURL, autoplay: false, generation: token)
+            try await backing.load(url: queue.currentTrack.localURL, generation: token)
         } catch {
             guard generation == token, controlGeneration == controlToken, state.status == .loading else { return }
             pendingAutoplay = false
@@ -274,6 +282,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
                 duration: duration
             ))
             if state.status == .loading, pendingAutoplay {
+                pendingAutoplay = false
                 do {
                     try await startPlayback()
                 } catch {
@@ -281,7 +290,9 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
                 }
             }
         case .playing:
-            guard state.status == .loading || state.status == .paused || isInterrupted(state.status) else { return }
+            guard pendingAutoplay,
+                  state.status == .loading || state.status == .paused || isInterrupted(state.status) else { return }
+            pendingAutoplay = false
             publish(try PlaybackState(
                 status: .playing,
                 currentTrackID: state.currentTrackID,
@@ -324,7 +335,12 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
     private func startPlayback() async throws {
         controlGeneration += 1
         let token = controlGeneration
-        try await backing.play()
+        do {
+            try await backing.play()
+        } catch {
+            guard controlGeneration == token else { return }
+            throw error
+        }
         guard controlGeneration == token,
               state.status == .loading || state.status == .paused || isInterrupted(state.status) else { return }
         publish(try PlaybackState(
@@ -357,12 +373,12 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         for continuation in stateObservers.values { continuation.yield(state) }
     }
 
-    private func addStateObserver(
+    func addStateObserver(
         id: UUID,
         continuation: AsyncStream<PlaybackState>.Continuation
     ) {
         stateObservers[id] = continuation
-        continuation.yield(state)
+        if case .terminated = continuation.yield(state) { stateObservers[id] = nil }
     }
 
     private func removeStateObserver(id: UUID) {
@@ -443,7 +459,7 @@ actor AVPlayerBacking: PlaybackBacking {
         return time
     }
 
-    func load(url: URL, autoplay: Bool, generation: UInt64) async throws {
+    func load(url: URL, generation: UInt64) async throws {
         removeObservers()
         player?.pause()
         let item = AVPlayerItem(url: url)
@@ -480,7 +496,6 @@ actor AVPlayerBacking: PlaybackBacking {
         ) { [weak self] _ in
             Task { await self?.emit(generation, .failed(.fileUnavailable)) }
         })
-        if autoplay { player.play() }
     }
 
     func play() async throws {

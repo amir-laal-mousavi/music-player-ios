@@ -115,6 +115,7 @@ actor FakeTelegramGateway: TelegramGateway {
         progress: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> URL {
         downloaded.append(audio)
+        guard pending[audio.identity] == nil else { throw TelegramGatewayError.downloadFailed }
         activeCancellations.remove(audio.identity)
         startedContinuation.yield(audio.identity)
         progressHandlers[audio.identity] = progress
@@ -160,6 +161,71 @@ actor FakeTelegramGateway: TelegramGateway {
     }
 }
 
+actor ControlledLibraryStore: LibraryStore {
+    private let base: any LibraryStore
+    private let shouldGate: @Sendable (ImportJob) -> Bool
+    private var didGate = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var saveFailure: (@Sendable (ImportJob) -> Bool)?
+    private var deleteFailure: DomainError?
+
+    let gatedSave: AsyncStream<Void>
+    private let gatedContinuation: AsyncStream<Void>.Continuation
+
+    init(
+        base: any LibraryStore,
+        shouldGate: @escaping @Sendable (ImportJob) -> Bool = { _ in false }
+    ) {
+        self.base = base
+        self.shouldGate = shouldGate
+        (gatedSave, gatedContinuation) = AsyncStream.makeStream()
+    }
+
+    func setSaveFailure(_ predicate: @escaping @Sendable (ImportJob) -> Bool) {
+        saveFailure = predicate
+    }
+
+    func setDeleteFailure(_ error: DomainError?) {
+        deleteFailure = error
+    }
+
+    func releaseGatedSave() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+
+    func tracks() async throws -> [Track] { try await base.tracks() }
+    func track(id: Track.ID) async throws -> Track { try await base.track(id: id) }
+    func track(for identity: TelegramAudioIdentity) async throws -> Track? {
+        try await base.track(for: identity)
+    }
+
+    func insertTrack(_ track: Track) async throws { try await base.insertTrack(track) }
+
+    func deleteTrack(id: Track.ID) async throws {
+        if let deleteFailure { throw deleteFailure }
+        try await base.deleteTrack(id: id)
+    }
+
+    func importJobs() async throws -> [ImportJob] { try await base.importJobs() }
+    func importJob(id: ImportJob.ID) async throws -> ImportJob { try await base.importJob(id: id) }
+
+    func saveImportJob(_ job: ImportJob) async throws {
+        if saveFailure?(job) == true { throw DomainError.library(.writeFailed) }
+        try await base.saveImportJob(job)
+        if !didGate, shouldGate(job) {
+            didGate = true
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                gatedContinuation.yield()
+                releaseContinuation = continuation
+            }
+        }
+    }
+
+    nonisolated func observeTracks() -> AsyncStream<[Track]> { base.observeTracks() }
+    nonisolated func observeImportJobs() -> AsyncStream<[ImportJob]> { base.observeImportJobs() }
+}
+
 actor FakePlaybackBacking: PlaybackBacking {
     let events: AsyncStream<PlaybackBackingEvent>
     private let continuation: AsyncStream<PlaybackBackingEvent>.Continuation
@@ -169,6 +235,9 @@ actor FakePlaybackBacking: PlaybackBacking {
     private var automaticReady = true
     private var loadError: PlayerError?
     private var playError: PlayerError?
+    private var oneShotPlayError: PlayerError?
+    private var gateNextPlayback = false
+    private var playContinuation: CheckedContinuation<Void, Never>?
     private(set) var loadedURLs: [URL] = []
     private(set) var playCount = 0
     private(set) var pauseCount = 0
@@ -192,18 +261,40 @@ actor FakePlaybackBacking: PlaybackBacking {
         playError = error
     }
 
-    func load(url: URL, autoplay: Bool, generation: UInt64) async throws {
+    var isPlaybackGated: Bool { playContinuation != nil }
+
+    func gateNextPlay() {
+        gateNextPlayback = true
+    }
+
+    func failNextPlay(_ error: PlayerError) {
+        oneShotPlayError = error
+    }
+
+    func releasePlay() {
+        playContinuation?.resume()
+        playContinuation = nil
+    }
+
+    func load(url: URL, generation: UInt64) async throws {
         currentGeneration = generation
         storedPosition = 0
         storedDuration = 100
         loadedURLs.append(url)
         if let loadError { throw loadError }
-        if autoplay { try await play() }
         if automaticReady { emit(.ready(duration: storedDuration)) }
     }
 
     func play() async throws {
-        if let playError { throw playError }
+        if gateNextPlayback {
+            gateNextPlayback = false
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                playContinuation = continuation
+            }
+        }
+        let error = oneShotPlayError ?? playError
+        oneShotPlayError = nil
+        if let error { throw error }
         playCount += 1
         storedDuration = 100
     }
@@ -226,6 +317,10 @@ actor FakePlaybackBacking: PlaybackBacking {
     func emitReady(duration: TimeInterval = 100) {
         storedDuration = duration
         emit(.ready(duration: duration))
+    }
+
+    func emitPlaying() {
+        emit(.playing)
     }
 
     func emitTime(position: TimeInterval, duration: TimeInterval? = nil) {

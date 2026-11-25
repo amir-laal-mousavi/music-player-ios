@@ -27,6 +27,64 @@ final class LibraryFileStoreTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: libraryRoot.path).count, 2)
     }
 
+    func testImportConsumesGatewaySourceOnlyAfterDurableCopy() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("gateway.download")
+        try Data("audio".utf8).write(to: source)
+        let libraryRoot = root.appendingPathComponent("Audio", isDirectory: true)
+        let store = try LibraryFileStore(directory: libraryRoot) { _ in 100 }
+
+        let imported = try await store.importDownloadedFile(
+            for: TestSupport.audio(),
+            at: source,
+            removingSourceOnSuccess: true
+        )
+
+        XCTAssertEqual(try Data(contentsOf: imported), Data("audio".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+
+        let failedSource = root.appendingPathComponent("failed.download")
+        try Data("audio".utf8).write(to: failedSource)
+        let failing = try LibraryFileStore(directory: libraryRoot, availableCapacity: { _ in 100 }) { _ in
+            throw DomainError.library(.writeFailed)
+        }
+        await assertDomainError(.library(.writeFailed)) {
+            _ = try await failing.importDownloadedFile(
+                for: TestSupport.audio(),
+                at: failedSource,
+                removingSourceOnSuccess: true
+            )
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: failedSource.path))
+    }
+
+    func testImportDoesNotDeleteASourceReplacedDuringCopy() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("gateway.download")
+        let target = root.appendingPathComponent("keep")
+        try Data("audio".utf8).write(to: source)
+        try Data("keep".utf8).write(to: target)
+        let store = try LibraryFileStore(
+            directory: root.appendingPathComponent("Audio", isDirectory: true),
+            availableCapacity: { _ in 100 }
+        ) { _ in
+            try FileManager.default.removeItem(at: source)
+            try FileManager.default.createSymbolicLink(at: source, withDestinationURL: target)
+        }
+
+        let imported = try await store.importDownloadedFile(
+            for: TestSupport.audio(),
+            at: source,
+            removingSourceOnSuccess: true
+        )
+
+        XCTAssertEqual(try Data(contentsOf: imported), Data("audio".utf8))
+        XCTAssertEqual(try Data(contentsOf: target), Data("keep".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
     func testCapacityFailurePreventsCopyAndLeavesNoPartial() async throws {
         let root = try TestSupport.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -125,6 +183,28 @@ final class LibraryFileStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: other), Data("other".utf8))
         XCTAssertEqual(try Data(contentsOf: outside), Data("outside".utf8))
         XCTAssertTrue(FileManager.default.fileExists(atPath: link.path))
+    }
+
+    func testOrphanCleanupKeepsReferencedOfflineFilesAndIgnoresOtherNames() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let libraryRoot = root.appendingPathComponent("Audio", isDirectory: true)
+        let store = try LibraryFileStore(directory: libraryRoot) { _ in 100 }
+        let referenced = libraryRoot.appendingPathComponent("\(UUID().uuidString).mp3")
+        let orphan = libraryRoot.appendingPathComponent("\(UUID().uuidString).flac")
+        let partial = libraryRoot.appendingPathComponent(".\(UUID().uuidString).part")
+        let unrelated = libraryRoot.appendingPathComponent("\(UUID().uuidString).mp3.backup")
+        try Data("referenced".utf8).write(to: referenced)
+        try Data("orphan".utf8).write(to: orphan)
+        try Data("partial".utf8).write(to: partial)
+        try Data("unrelated".utf8).write(to: unrelated)
+
+        try await store.cleanupOrphanedFiles(referencedBy: [referenced])
+
+        XCTAssertEqual(try Data(contentsOf: referenced), Data("referenced".utf8))
+        XCTAssertEqual(try Data(contentsOf: unrelated), Data("unrelated".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
     }
 
     func testCleanupRemovesOnlyValidHiddenUUIDPartials() async throws {

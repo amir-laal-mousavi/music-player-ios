@@ -47,6 +47,8 @@ public actor SwiftDataLibraryStore: LibraryStore {
         loadTracks()
     }
 
+    var trackObserverCount: Int { trackObservers.count }
+
     nonisolated public func observeTracks() -> AsyncStream<[Track]> {
         AsyncStream { continuation in
             let id = UUID()
@@ -111,6 +113,8 @@ public actor SwiftDataLibraryStore: LibraryStore {
         loadJobs()
     }
 
+    var jobObserverCount: Int { jobObservers.count }
+
     nonisolated public func observeImportJobs() -> AsyncStream<[ImportJob]> {
         AsyncStream { continuation in
             let id = UUID()
@@ -151,17 +155,16 @@ public actor SwiftDataLibraryStore: LibraryStore {
         await publishJobs()
     }
 
-    private func addTrackObserver(
+    func addTrackObserver(
         _ id: UUID,
         continuation: AsyncStream<[Track]>.Continuation
     ) async {
-        trackObservers[id] = continuation
         guard let snapshot = try? loadTracks() else {
-            trackObservers[id] = nil
             continuation.finish()
             return
         }
-        continuation.yield(snapshot)
+        trackObservers[id] = continuation
+        if case .terminated = continuation.yield(snapshot) { trackObservers[id] = nil }
     }
 
     private func removeTrackObserver(_ id: UUID) {
@@ -177,17 +180,16 @@ public actor SwiftDataLibraryStore: LibraryStore {
         for continuation in trackObservers.values { continuation.yield(snapshot) }
     }
 
-    private func addJobObserver(
+    func addJobObserver(
         _ id: UUID,
         continuation: AsyncStream<[ImportJob]>.Continuation
     ) async {
-        jobObservers[id] = continuation
         guard let snapshot = try? loadJobs() else {
-            jobObservers[id] = nil
             continuation.finish()
             return
         }
-        continuation.yield(snapshot)
+        jobObservers[id] = continuation
+        if case .terminated = continuation.yield(snapshot) { jobObservers[id] = nil }
     }
 
     private func removeJobObserver(_ id: UUID) {

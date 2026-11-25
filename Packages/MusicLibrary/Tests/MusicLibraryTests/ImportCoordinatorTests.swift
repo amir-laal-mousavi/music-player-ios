@@ -28,6 +28,7 @@ final class ImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(track.localURL.deletingLastPathComponent(), audioRoot.standardizedFileURL)
         XCTAssertEqual(try Data(contentsOf: track.localURL), Data("audio".utf8))
         await assertEqual(await gateway.downloadCount, 1)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).allSatisfy { !$0.hasSuffix(".download") })
     }
 
     func testExistingIdentityIsDuplicateWithoutDownloading() async throws {
@@ -293,7 +294,9 @@ final class ImportCoordinatorTests: XCTestCase {
         let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
         let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
         let partial = audioRoot.appendingPathComponent(".\(UUID().uuidString).part")
+        let orphan = audioRoot.appendingPathComponent("\(UUID().uuidString).mp3")
         try Data("partial".utf8).write(to: partial)
+        try Data("orphan".utf8).write(to: orphan)
         let item = try ImportItem(audio: TestSupport.audio(), status: .importing)
         let interrupted = try ImportJob(sourceChat: TestSupport.chat, items: [item], status: .active)
         try await store.saveImportJob(interrupted)
@@ -304,7 +307,245 @@ final class ImportCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(completed.status, .completed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: audioRoot.path).count, 1)
+    }
+
+    func testRecoverRestartsDurableJobsOldestFirst() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let gateway = FakeTelegramGateway(directory: root)
+        let olderAudio = TestSupport.audio(messageID: 1)
+        let newerAudio = TestSupport.audio(messageID: 2)
+        await gateway.setDeferred(true, for: olderAudio.identity)
+        await gateway.setDeferred(true, for: newerAudio.identity)
+        let olderItem = try ImportItem(audio: olderAudio, status: .importing)
+        let newerItem = try ImportItem(audio: newerAudio, status: .importing)
+        let older = try ImportJob(
+            sourceChat: TestSupport.chat,
+            items: [olderItem],
+            status: .active,
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 101)
+        )
+        let newer = try ImportJob(
+            sourceChat: TestSupport.chat,
+            items: [newerItem],
+            status: .active,
+            createdAt: Date(timeIntervalSince1970: 200),
+            updatedAt: Date(timeIntervalSince1970: 201)
+        )
+        try await store.saveImportJob(older)
+        try await store.saveImportJob(newer)
+        var starts = gateway.startedDownloads.makeAsyncIterator()
+        let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+
+        try await coordinator.recover()
+
+        let jobsByAudio = [olderAudio.identity: older, newerAudio.identity: newer]
+        for expected in [olderAudio.identity, newerAudio.identity] {
+            let started = try XCTUnwrap(await starts.next())
+            await assertEqual(started, expected)
+            try await gateway.completeDownload(for: started)
+            let completed = try await coordinator.wait(for: try XCTUnwrap(jobsByAudio[started]).id)
+            await assertEqual(completed.status, .completed)
+        }
+    }
+
+    func testJobsRunInEnqueueOrder() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let gateway = FakeTelegramGateway(directory: root)
+        let firstAudio = TestSupport.audio(messageID: 1)
+        let secondAudio = TestSupport.audio(messageID: 2)
+        await gateway.setDeferred(true, for: firstAudio.identity)
+        var starts = gateway.startedDownloads.makeAsyncIterator()
+        let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+
+        let first = try await coordinator.enqueue([firstAudio], from: TestSupport.chat)
+        await assertEqual(await starts.next(), firstAudio.identity)
+        let second = try await coordinator.enqueue([secondAudio], from: TestSupport.chat)
+        for _ in 0..<100 { await Task.yield() }
+        await assertEqual(await gateway.downloadCount, 1)
+
+        try await gateway.completeDownload(for: firstAudio.identity)
+        _ = try await coordinator.wait(for: first.id)
+        await assertEqual(await starts.next(), secondAudio.identity)
+        let completed = try await coordinator.wait(for: second.id)
+        await assertEqual(completed.status, .completed)
+        await assertEqual(try await store.tracks().count, 2)
+    }
+
+    func testConcurrentDuplicateJobsShareOneDownloadAndOneTrack() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let gateway = FakeTelegramGateway(directory: root)
+        let audio = TestSupport.audio()
+        await gateway.setDeferred(true, for: audio.identity)
+        var starts = gateway.startedDownloads.makeAsyncIterator()
+        let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
+        let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+
+        let first = try await coordinator.enqueue([audio], from: TestSupport.chat)
+        await assertEqual(await starts.next(), audio.identity)
+        let second = try await coordinator.enqueue([audio], from: TestSupport.chat)
+        try await gateway.completeDownload(for: audio.identity)
+
+        let imported = try await coordinator.wait(for: first.id)
+        let duplicate = try await coordinator.wait(for: second.id)
+        await assertEqual(imported.status, .completed)
+        await assertEqual(duplicate.status, .completed)
+        await assertEqual(duplicate.items.first?.status, .duplicate)
+        await assertEqual(duplicate.items.first?.trackID, imported.items.first?.trackID)
+        await assertEqual(await gateway.downloadCount, 1)
+        await assertEqual(try await store.tracks().count, 1)
+        await assertEqual(try FileManager.default.contentsOfDirectory(atPath: audioRoot.path).count, 1)
+    }
+
+    func testResumeWaitsForWaitingTaskToFinishBeforeRestarting() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let store = ControlledLibraryStore(base: base) { $0.status == .waitingToResume }
+        let gateway = FakeTelegramGateway(directory: root)
+        let audio = TestSupport.audio()
+        await gateway.setError(.networkUnavailable, for: audio.identity)
+        let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+        let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
+        var gates = store.gatedSave.makeAsyncIterator()
+        await assertNotNil(await gates.next())
+
+        await gateway.setError(nil, for: audio.identity)
+        let resumeTask = Task { try await coordinator.resume(jobID: queued.id) }
+        for _ in 0..<100 { await Task.yield() }
+        await store.releaseGatedSave()
+        _ = try await resumeTask.value
+        let completed = try await coordinator.wait(for: queued.id)
+        await assertEqual(completed.status, .completed)
+    }
+
+    func testRetryWaitsForPartialFailureTaskToFinishBeforeRestarting() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let store = ControlledLibraryStore(base: base) { $0.status == .partialFailure }
+        let gateway = FakeTelegramGateway(directory: root)
+        let audio = TestSupport.audio()
+        await gateway.setError(.downloadFailed, for: audio.identity)
+        let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+        let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
+        var gates = store.gatedSave.makeAsyncIterator()
+        await assertNotNil(await gates.next())
+
+        await gateway.setError(nil, for: audio.identity)
+        let retryTask = Task { try await coordinator.retry(jobID: queued.id) }
+        for _ in 0..<100 { await Task.yield() }
+        await store.releaseGatedSave()
+        _ = try await retryTask.value
+        try await eventually {
+            let job = try? await store.importJob(id: queued.id)
+            return job?.status == .completed
+        }
+    }
+
+    func testPauseFinishesDurableActiveJobWithoutAProductionTask() async throws {
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let progress = try DownloadProgress(totalBytes: 4, completedBytes: 2)
+        let item = try ImportItem(audio: TestSupport.audio(), status: .importing, progress: progress)
+        let active = try ImportJob(sourceChat: TestSupport.chat, items: [item], status: .active)
+        try await store.saveImportJob(active)
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = ImportCoordinator(
+            gateway: FakeTelegramGateway(directory: root),
+            store: store,
+            fileStore: try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        )
+
+        let paused = try await coordinator.pause(jobID: active.id)
+
+        await assertEqual(paused.status, .paused)
+        await assertEqual(paused.items.first?.status, .waiting)
+        await assertEqual(paused.items.first?.progress, progress)
+    }
+
+    func testRecoverStopsActiveTaskBeforeCleaningAndRestartingIt() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let gateway = FakeTelegramGateway(directory: root)
+        let audio = TestSupport.audio()
+        await gateway.setDeferred(true, for: audio.identity)
+        var starts = gateway.startedDownloads.makeAsyncIterator()
+        let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+        let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
+        await assertEqual(await starts.next(), audio.identity)
+        await gateway.setDeferred(false, for: audio.identity)
+
+        try await coordinator.recover()
+
+        try await eventually { await gateway.downloadCount == 2 }
+        await assertTrue(await gateway.cancelledDownloads.contains(audio.identity))
+        let completed = try await coordinator.wait(for: queued.id)
+        await assertEqual(completed.status, .completed)
+    }
+
+    func testMetadataDeleteFailureKeepsOfflineFile() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let store = ControlledLibraryStore(base: base)
+        let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
+        let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
+        let localURL = audioRoot.appendingPathComponent("track.mp3")
+        try Data("audio".utf8).write(to: localURL)
+        let track = TestSupport.track(localURL: localURL)
+        try await store.insertTrack(track)
+        await store.setDeleteFailure(.library(.writeFailed))
+        let coordinator = ImportCoordinator(
+            gateway: FakeTelegramGateway(directory: root),
+            store: store,
+            fileStore: files
+        )
+
+        await assertDomainError(.library(.writeFailed)) {
+            try await coordinator.deleteTrack(id: track.id)
+        }
+
+        await assertEqual(try await store.track(id: track.id), track)
+        XCTAssertEqual(try Data(contentsOf: localURL), Data("audio".utf8))
+    }
+
+    func testFailedJobRollbackKeepsFileWhenMetadataDeleteFails() async throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
+        let store = ControlledLibraryStore(base: base)
+        await store.setSaveFailure { job in
+            job.status == .active && job.items.contains { $0.status == .imported }
+        }
+        await store.setDeleteFailure(.library(.writeFailed))
+        let gateway = FakeTelegramGateway(directory: root)
+        let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
+        let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
+        let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
+
+        let queued = try await coordinator.enqueue([TestSupport.audio()], from: TestSupport.chat)
+        let failed = try await coordinator.wait(for: queued.id)
+        let track = try await store.track(for: TestSupport.audio().identity)
+
+        await assertEqual(failed.status, .partialFailure)
+        await assertNotNil(track)
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(track).localURL), Data("audio".utf8))
     }
 
     func testDeleteImportedTrackRemovesMetadataAndOnlyItsFile() async throws {

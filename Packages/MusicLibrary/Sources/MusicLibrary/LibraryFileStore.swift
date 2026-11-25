@@ -95,6 +95,14 @@ public actor LibraryFileStore {
     }
 
     public func importDownloadedFile(for audio: TelegramAudio, at sourceURL: URL) async throws -> URL {
+        try await importDownloadedFile(for: audio, at: sourceURL, removingSourceOnSuccess: false)
+    }
+
+    func importDownloadedFile(
+        for audio: TelegramAudio,
+        at sourceURL: URL,
+        removingSourceOnSuccess: Bool
+    ) async throws -> URL {
         guard sourceURL.isFileURL, !sourceURL.path.utf8.contains(0) else {
             throw DomainError.library(.corruptData)
         }
@@ -150,6 +158,9 @@ public actor LibraryFileStore {
             throw DomainError.library(.writeFailed)
         }
         committed = true
+        if removingSourceOnSuccess {
+            removeSourceIfUnchanged(sourceURL, sourceInfo: sourceInfo)
+        }
         return directory.appendingPathComponent(finalName, isDirectory: false)
     }
 
@@ -176,6 +187,20 @@ public actor LibraryFileStore {
     }
 
     public func cleanupPartials() async throws {
+        try await removeGeneratedFiles(keeping: [], includeFinalFiles: false)
+    }
+
+    func cleanupOrphanedFiles(referencedBy referencedURLs: Set<URL>) async throws {
+        let keeping = Set(
+            referencedURLs
+                .map(\.standardizedFileURL)
+                .filter { $0.deletingLastPathComponent() == directory }
+                .map(\.lastPathComponent)
+        )
+        try await removeGeneratedFiles(keeping: keeping, includeFinalFiles: true)
+    }
+
+    private func removeGeneratedFiles(keeping: Set<String>, includeFinalFiles: Bool) async throws {
         let rootFD = try openRoot()
         defer { close(rootFD) }
         let listingFD = dup(rootFD)
@@ -188,7 +213,9 @@ public actor LibraryFileStore {
             let name = withUnsafePointer(to: &entry.pointee.d_name) {
                 String(cString: UnsafeRawPointer($0).assumingMemoryBound(to: CChar.self))
             }
-            guard isPartialName(name) else { continue }
+            let isPartial = isPartialName(name)
+            let isOrphan = includeFinalFiles && isFinalName(name) && !keeping.contains(name)
+            guard isPartial || isOrphan else { continue }
             let info = try fstatat(rootFD, name, AT_SYMLINK_NOFOLLOW)
             guard info.st_mode != 0 else { continue }
             guard S_ISREG(info.st_mode), info.st_nlink == 1 else { continue }
@@ -196,6 +223,20 @@ public actor LibraryFileStore {
                 throw DomainError.library(.writeFailed)
             }
         }
+    }
+
+    private func removeSourceIfUnchanged(_ sourceURL: URL, sourceInfo: stat) {
+        // The library copy is durable; failure to remove the gateway's staged copy only wastes cache space.
+        let parentFD = open(
+            sourceURL.deletingLastPathComponent().path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard parentFD >= 0 else { return }
+        defer { close(parentFD) }
+        var current = stat()
+        guard fstatat(parentFD, sourceURL.lastPathComponent, &current, AT_SYMLINK_NOFOLLOW) == 0,
+              current.st_dev == sourceInfo.st_dev, current.st_ino == sourceInfo.st_ino else { return }
+        _ = unlinkat(parentFD, sourceURL.lastPathComponent, 0)
     }
 
     private func openRoot() throws -> Int32 {
@@ -255,5 +296,11 @@ public actor LibraryFileStore {
         guard name.hasPrefix("."), name.hasSuffix(".part") else { return false }
         let value = String(name.dropFirst().dropLast(".part".count))
         return UUID(uuidString: value) != nil
+    }
+
+    private func isFinalName(_ name: String) -> Bool {
+        let parts = name.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2, UUID(uuidString: String(parts[0])) != nil else { return false }
+        return ["mp3", "m4a", "aac", "ogg", "wav", "flac", "audio"].contains(String(parts[1]))
     }
 }
