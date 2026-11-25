@@ -47,20 +47,28 @@ internal final class SafeDownloadDirectory: @unchecked Sendable {
     private let descriptor: Int32
     private let device: dev_t
     private let inode: ino_t
+    // Keep the kernel's physical spelling so URL aliases cannot hide a later rename.
+    private let rootPath: String
 
     init(directory: URL) throws {
         guard directory.isFileURL else { throw DomainError.telegram(.downloadFailed) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let canonical = directory.resolvingSymlinksInPath().standardizedFileURL
-        let descriptor = open(canonical.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        #if os(macOS) || os(iOS)
+        let resolvedPath = try Self.physicalPath(canonical.path)
+        #else
+        let resolvedPath = canonical.path
+        #endif
+        let descriptor = open(resolvedPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard descriptor >= 0 else { throw DomainError.telegram(.downloadFailed) }
         var status = stat()
         guard fstat(descriptor, &status) == 0, (status.st_mode & S_IFMT) == S_IFDIR else {
             close(descriptor)
             throw DomainError.telegram(.downloadFailed)
         }
+        let rootPath: String
         do {
-            try Self.verifyRootPath(descriptor, canonical: canonical)
+            rootPath = try Self.verifyRootPath(descriptor, expected: resolvedPath)
         } catch {
             close(descriptor)
             throw error
@@ -69,6 +77,7 @@ internal final class SafeDownloadDirectory: @unchecked Sendable {
         self.descriptor = descriptor
         self.device = status.st_dev
         self.inode = status.st_ino
+        self.rootPath = rootPath
     }
 
     deinit {
@@ -198,15 +207,28 @@ internal final class SafeDownloadDirectory: @unchecked Sendable {
               (attributes[.systemFileNumber] as? NSNumber)?.int64Value == Int64(inode) else {
             throw DomainError.telegram(.downloadFailed)
         }
-        try Self.verifyRootPath(descriptor, canonical: url)
+        _ = try Self.verifyRootPath(descriptor, expected: rootPath)
     }
 
-    private static func verifyRootPath(_ descriptor: Int32, canonical: URL) throws {
+    #if os(macOS) || os(iOS)
+    private static func physicalPath(_ path: String) throws -> String {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard realpath(path, &buffer) != nil else { throw DomainError.telegram(.downloadFailed) }
+        return String(cString: buffer)
+    }
+    #endif
+
+    private static func verifyRootPath(_ descriptor: Int32, expected: String) throws -> String {
         #if os(macOS) || os(iOS)
-        var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        guard fcntl(descriptor, F_GETPATH, &path) == 0, String(cString: path) == canonical.path else {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fcntl(descriptor, F_GETPATH, &buffer) == 0 else {
             throw DomainError.telegram(.downloadFailed)
         }
+        let path = String(cString: buffer)
+        guard path == expected else { throw DomainError.telegram(.downloadFailed) }
+        return path
+        #else
+        return expected
         #endif
     }
 }
