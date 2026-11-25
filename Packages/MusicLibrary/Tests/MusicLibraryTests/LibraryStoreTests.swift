@@ -49,14 +49,20 @@ final class LibraryStoreTests: XCTestCase {
     func testCancelledObserversAreNotRetainedWhenRegistered() async throws {
         let store = SwiftDataLibraryStore(container: try SwiftDataLibraryStore.makeContainer(inMemory: true))
         let (trackStream, trackContinuation) = AsyncStream<[Track]>.makeStream()
-        let trackRead = Task { await trackStream.makeAsyncIterator().next() }
+        let trackRead = Task {
+            var iterator = trackStream.makeAsyncIterator()
+            return await iterator.next()
+        }
         trackRead.cancel()
         XCTAssertNil(await trackRead.value)
         await store.addTrackObserver(UUID(), continuation: trackContinuation)
         await assertEqual(await store.trackObserverCount, 0)
 
         let (jobStream, jobContinuation) = AsyncStream<[ImportJob]>.makeStream()
-        let jobRead = Task { await jobStream.makeAsyncIterator().next() }
+        let jobRead = Task {
+            var iterator = jobStream.makeAsyncIterator()
+            return await iterator.next()
+        }
         jobRead.cancel()
         XCTAssertNil(await jobRead.value)
         await store.addJobObserver(UUID(), continuation: jobContinuation)
@@ -194,7 +200,7 @@ final class LibraryStoreTests: XCTestCase {
         await assertEqual(try await reopened.importJob(id: original.id), original)
     }
 
-    func testCorruptAndUnsupportedJobPayloadsAreRejected() throws {
+    func testCorruptAndUnsupportedJobPayloadsAreRejected() async throws {
         let job = try job(id: UUID(), messageID: 1, createdAt: 1)
         let record = try PersistedImportJob(job: job)
         record.payload = Data("not-json".utf8)

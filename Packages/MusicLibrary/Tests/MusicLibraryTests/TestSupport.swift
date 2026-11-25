@@ -91,7 +91,7 @@ actor FakeTelegramGateway: TelegramGateway {
         progressHandlers[identity]?(progress)
     }
 
-    func observeAuthState() -> AsyncStream<TelegramAuthState> {
+    nonisolated func observeAuthState() -> AsyncStream<TelegramAuthState> {
         AsyncStream { continuation in
             Task {
                 continuation.yield(await self.authState)

@@ -5,7 +5,7 @@ import XCTest
 
 final class PlayerEngineTests: XCTestCase {
     func testIdleRejectsControlsAndInvalidQueues() async throws {
-        let (engine, _) = try makeEngine()
+        let engine: AVFoundationPlayerEngine = try makeEngine()
         await assertEqual(await engine.state, .idle)
         await assertNil(await engine.queue)
         await assertDomainError(.playback(.notReady)) { try await engine.previous() }
@@ -240,7 +240,10 @@ final class PlayerEngineTests: XCTestCase {
     func testCancelledStateObserverIsNotRetainedWhenRegistered() async throws {
         let engine = try makeEngine()
         let (stream, continuation) = AsyncStream<PlaybackState>.makeStream()
-        let read = Task { await stream.makeAsyncIterator().next() }
+        let read = Task {
+            var iterator = stream.makeAsyncIterator()
+            return await iterator.next()
+        }
         read.cancel()
         XCTAssertNil(await read.value)
 

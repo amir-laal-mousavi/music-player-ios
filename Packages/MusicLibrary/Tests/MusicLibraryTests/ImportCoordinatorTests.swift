@@ -146,7 +146,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let gateway = FakeTelegramGateway(directory: root)
         let audio = TestSupport.audio()
         await gateway.setDeferred(true, for: audio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
 
@@ -177,7 +177,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let gateway = FakeTelegramGateway(directory: root)
         let audio = TestSupport.audio()
         await gateway.setDeferred(true, for: audio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
 
@@ -213,7 +213,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let gateway = FakeTelegramGateway(directory: root)
         let audio = TestSupport.audio()
         await gateway.setDeferred(true, for: audio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
         let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
@@ -241,7 +241,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let gateway = FakeTelegramGateway(directory: root)
         let audio = TestSupport.audio()
         await gateway.setDeferred(true, for: audio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
         let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
@@ -268,7 +268,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let gateway = FakeTelegramGateway(directory: root)
         let audio = TestSupport.audio()
         await gateway.setDeferred(true, for: audio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
         let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
@@ -338,7 +338,7 @@ final class ImportCoordinatorTests: XCTestCase {
         )
         try await store.saveImportJob(older)
         try await store.saveImportJob(newer)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
 
@@ -346,7 +346,8 @@ final class ImportCoordinatorTests: XCTestCase {
 
         let jobsByAudio = [olderAudio.identity: older, newerAudio.identity: newer]
         for expected in [olderAudio.identity, newerAudio.identity] {
-            let started = try XCTUnwrap(await starts.next())
+            let next = await starts.next()
+            let started = try XCTUnwrap(next)
             await assertEqual(started, expected)
             try await gateway.completeDownload(for: started)
             let completed = try await coordinator.wait(for: try XCTUnwrap(jobsByAudio[started]).id)
@@ -362,7 +363,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let firstAudio = TestSupport.audio(messageID: 1)
         let secondAudio = TestSupport.audio(messageID: 2)
         await gateway.setDeferred(true, for: firstAudio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
 
@@ -387,7 +388,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let gateway = FakeTelegramGateway(directory: root)
         let audio = TestSupport.audio()
         await gateway.setDeferred(true, for: audio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let audioRoot = root.appendingPathComponent("Audio", isDirectory: true)
         let files = try LibraryFileStore(directory: audioRoot) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
@@ -484,7 +485,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let gateway = FakeTelegramGateway(directory: root)
         let audio = TestSupport.audio()
         await gateway.setDeferred(true, for: audio.identity)
-        var starts = gateway.startedDownloads.makeAsyncIterator()
+        var starts = await gateway.startedDownloads.makeAsyncIterator()
         let files = try LibraryFileStore(directory: root.appendingPathComponent("Audio", isDirectory: true)) { _ in 100 }
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
         let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
