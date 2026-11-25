@@ -358,7 +358,7 @@ final class TelegramGatewayTests: XCTestCase {
         }
         await assertDomainError(.telegram(.downloadFailed)) {
             _ = try await withTimeout {
-                try await gateway.downloadAudio(try syntheticAudio(size: 12)) { _ in }
+                try await gateway.downloadAudio(try self.syntheticAudio(size: 12)) { _ in }
             }
         }
         XCTAssertTrue(transport.sentRecords().contains { $0.type == "cancelDownloadFile" })
