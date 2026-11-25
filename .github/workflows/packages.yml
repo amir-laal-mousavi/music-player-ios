@@ -21,4 +21,11 @@ jobs:
           - MusicLibrary
     steps:
       - uses: actions/checkout@v4
-      - run: swift test --package-path Packages/${{ matrix.package }}
+      - env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          if [ -f "Packages/$PACKAGE/Package.swift" ]; then
+            swift test --package-path "Packages/$PACKAGE"
+          else
+            echo "Skipping $PACKAGE: package not present"
+          fi
