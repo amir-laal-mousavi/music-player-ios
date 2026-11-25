@@ -46,7 +46,7 @@ public actor ImportCoordinator {
             }
             return try job.transition(to: .pausing, updatedAt: timestamp(after: job.updatedAt))
         }
-        let task = taskTokens[jobID].map { tasks[$0] }
+        let task = taskTokens[jobID].flatMap { tasks[$0] }
         task?.cancel()
         if let item = pausing.items.first(where: { $0.status == .importing }) {
             await gateway.cancelDownload(for: item.id)
@@ -108,7 +108,7 @@ public actor ImportCoordinator {
                 updatedAt: timestamp(after: normalized.updatedAt)
             )
         }
-        let task = taskTokens[jobID].map { tasks[$0] }
+        let task = taskTokens[jobID].flatMap { tasks[$0] }
         task?.cancel()
         if let item = previous.items.first(where: { $0.status == .importing }) {
             await gateway.cancelDownload(for: item.id)

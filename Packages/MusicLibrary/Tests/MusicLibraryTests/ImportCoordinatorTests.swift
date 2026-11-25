@@ -109,7 +109,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
 
         let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
-        let waiting = try await coordinator.waitUntilWaiting(queued.id)
+        let waiting = try await coordinator.waitUntilWaiting(queued.id, in: store)
         XCTAssertEqual(waiting.status, .waitingToResume)
         XCTAssertEqual(waiting.items.first?.status, .waiting)
 
@@ -130,7 +130,7 @@ final class ImportCoordinatorTests: XCTestCase {
         let coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: files)
 
         let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
-        _ = try await coordinator.waitUntilWaiting(queued.id)
+        _ = try await coordinator.waitUntilWaiting(queued.id, in: store)
         let cancelled = try await coordinator.cancel(jobID: queued.id)
 
         await assertEqual(cancelled.status, .cancelled)
@@ -331,9 +331,9 @@ final class ImportCoordinatorTests: XCTestCase {
 }
 
 private extension ImportCoordinator {
-    func waitUntilWaiting(_ jobID: ImportJob.ID) async throws -> ImportJob {
+    func waitUntilWaiting(_ jobID: ImportJob.ID, in store: any LibraryStore) async throws -> ImportJob {
         try await eventually {
-            guard let job = try? await self.store.importJob(id: jobID) else { return false }
+            guard let job = try? await store.importJob(id: jobID) else { return false }
             return job.status == .waitingToResume
         }
         return try await store.importJob(id: jobID)
