@@ -229,7 +229,7 @@ internal enum DownloadFileNaming {
         }
     }
 
-    static func sanitizedExtension(_ extension: String?) -> String {
+    static func sanitizedExtension(_ fileExtension: String?) -> String {
         guard let fileExtension = fileExtension,
               [".mp3", ".m4a", ".ogg", ".wav", ".flac"].contains(fileExtension) else {
             return ""

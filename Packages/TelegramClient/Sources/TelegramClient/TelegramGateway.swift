@@ -241,7 +241,7 @@ public actor TelegramGatewayClient: TelegramGateway {
         let cancellation = DownloadCancellationToken()
         let events = DownloadEvents()
         let task = Task {
-            await performDownload(
+            try await performDownload(
                 audio: audio,
                 sessionID: sessionID,
                 cancellation: cancellation,
@@ -339,7 +339,8 @@ public actor TelegramGatewayClient: TelegramGateway {
             var bytes = [UInt8](repeating: 0, count: 32)
             let count = bytes.count
             let randomStatus = bytes.withUnsafeMutableBytes { buffer in
-                SecRandomCopyBytes(kSecRandomDefault, count, buffer.baseAddress)
+                guard let baseAddress = buffer.baseAddress else { return errSecParam }
+                return SecRandomCopyBytes(kSecRandomDefault, count, baseAddress)
             }
             guard randomStatus == errSecSuccess else { throw DomainError.telegram(.invalidResponse) }
             let key = Data(bytes)
