@@ -81,6 +81,7 @@ final class PlayerEngineTests: XCTestCase {
 
         try await engine.previous()
         await assertEqual(await engine.queue?.currentIndex, 0)
+        try await eventually { await engine.state.status == .playing }
         let beforeBoundary = await engine.state
         await assertDomainError(.playback(.queueBoundary)) { try await engine.previous() }
         await assertEqual(await engine.state, beforeBoundary)
