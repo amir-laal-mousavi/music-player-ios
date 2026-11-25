@@ -15,21 +15,21 @@ final class TelegramAuthStateTests: XCTestCase {
     private let allowed: [(TelegramAuthState, TelegramAuthState)] = [
         (.unauthenticated, .waitingForPhone),
         (.unauthenticated, .authenticated),
-        (.unauthenticated, .failure),
+        (.unauthenticated, .failure(.telegram(.networkUnavailable))),
         (.waitingForPhone, .waitingForCode),
         (.waitingForPhone, .authenticated),
-        (.waitingForPhone, .failure),
+        (.waitingForPhone, .failure(.telegram(.networkUnavailable))),
         (.waitingForCode, .waitingForPassword),
         (.waitingForCode, .authenticated),
-        (.waitingForCode, .failure),
+        (.waitingForCode, .failure(.telegram(.networkUnavailable))),
         (.waitingForPassword, .authenticated),
-        (.waitingForPassword, .failure),
+        (.waitingForPassword, .failure(.telegram(.networkUnavailable))),
         (.authenticated, .loggingOut),
-        (.authenticated, .failure),
+        (.authenticated, .failure(.telegram(.networkUnavailable))),
         (.loggingOut, .unauthenticated),
         (.loggingOut, .authenticated),
-        (.loggingOut, .failure),
-        (.failure, .unauthenticated)
+        (.loggingOut, .failure(.telegram(.networkUnavailable))),
+        (.failure(.telegram(.networkUnavailable)), .unauthenticated)
     ]
 
     func testOnlyDocumentedAuthenticationTransitionsAreAllowed() throws {

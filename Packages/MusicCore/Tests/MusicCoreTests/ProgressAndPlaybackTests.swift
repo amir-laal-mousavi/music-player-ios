@@ -70,7 +70,7 @@ final class ProgressAndPlaybackTests: XCTestCase {
             currentTrackID: trackID,
             position: 30,
             duration: 120,
-            error: .unavailable
+            error: .library(.unavailable)
         ))
         XCTAssertThrowsError(try PlaybackState(status: .idle, currentTrackID: trackID))
     }

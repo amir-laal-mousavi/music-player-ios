@@ -109,6 +109,13 @@ private actor LibraryStoreSpy: LibraryStore {
         importJobObservers[id] = nil
     }
 
+    private func finishImportJobObservation() {
+        for continuation in importJobObservers.values {
+            continuation.finish()
+        }
+        importJobObservers.removeAll()
+    }
+
     private func publishImportJobs() {
         let snapshot = jobs.values.sorted { $0.createdAt > $1.createdAt }
         for continuation in importJobObservers.values {
@@ -255,16 +262,29 @@ private actor PlayerEngineSpy: PlayerEngine {
 }
 
 final class ProtocolConformanceTests: XCTestCase {
+    private func assertThrowsDomainError(
+        _ expected: DomainError,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        operation: () async throws -> Void
+    ) async {
+        do {
+            try await operation()
+            XCTFail("Expected \(expected)", file: file, line: line)
+        } catch {
+            XCTAssertEqual(error as? DomainError, expected, file: file, line: line)
+        }
+    }
+
     func testGatewayRejectsChatAccessBeforeAuthentication() async throws {
         let gateway = TelegramGatewaySpy()
-        XCTAssertThrowsError(try await gateway.submitPassword("test-password")) { error in
-            XCTAssertEqual(
-                error as? DomainError,
-                .invalidStateTransition(
-                    from: String(describing: TelegramAuthState.unauthenticated),
-                    to: String(describing: TelegramAuthState.authenticated)
-                )
+        await assertThrowsDomainError(
+            .invalidStateTransition(
+                from: String(describing: TelegramAuthState.unauthenticated),
+                to: String(describing: TelegramAuthState.authenticated)
             )
+        ) {
+            try await gateway.submitPassword("test-password")
         }
         let accountBeforeAuthentication = await gateway.currentAccount
         XCTAssertNil(accountBeforeAuthentication)
@@ -373,7 +393,6 @@ final class ProtocolConformanceTests: XCTestCase {
     func testStoreEmitsImportJobSnapshots() async throws {
         let store = LibraryStoreSpy()
         let stream = store.observeImportJobs()
-        defer { stream.cancel() }
         var iterator = stream.makeAsyncIterator()
         let initial = await iterator.next()
         XCTAssertEqual(initial, [])
@@ -390,6 +409,7 @@ final class ProtocolConformanceTests: XCTestCase {
         try await store.saveImportJob(active)
         let updated = await iterator.next()
         XCTAssertEqual(updated, [active])
+        await store.finishImportJobObservation()
     }
 
     func testPlayerMovesThroughTransientQueueWithoutCrossingBoundaries() async throws {
@@ -412,8 +432,8 @@ final class ProtocolConformanceTests: XCTestCase {
         XCTAssertEqual(queue?.currentIndex, 0)
         XCTAssertEqual(state.currentTrackID, tracks[0].id)
         XCTAssertEqual(state.position, 0)
-        XCTAssertThrowsError(try await player.previous()) { error in
-            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        await assertThrowsDomainError(.playback(.queueBoundary)) {
+            try await player.previous()
         }
 
         try await player.next()
@@ -422,8 +442,8 @@ final class ProtocolConformanceTests: XCTestCase {
         queue = await player.queue
         XCTAssertEqual(queue?.currentIndex, 2)
         XCTAssertEqual(state.currentTrackID, tracks[2].id)
-        XCTAssertThrowsError(try await player.next()) { error in
-            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        await assertThrowsDomainError(.playback(.queueBoundary)) {
+            try await player.next()
         }
         let stateAtBoundary = await player.state
         let queueAtBoundary = await player.queue
@@ -440,14 +460,14 @@ final class ProtocolConformanceTests: XCTestCase {
     func testPlayerRejectsInvalidQueuesAndSupportsSingleTrackQueue() async throws {
         let player = PlayerEngineSpy()
         let track = try TestFixtures.track(audio: TestFixtures.audio())
-        XCTAssertThrowsError(try await player.play([], startingAt: 0)) { error in
-            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        await assertThrowsDomainError(.invalidPlaybackQueue) {
+            try await player.play([], startingAt: 0)
         }
-        XCTAssertThrowsError(try await player.play([track, track], startingAt: 0)) { error in
-            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        await assertThrowsDomainError(.invalidPlaybackQueue) {
+            try await player.play([track, track], startingAt: 0)
         }
-        XCTAssertThrowsError(try await player.play([track], startingAt: 1)) { error in
-            XCTAssertEqual(error as? DomainError, .invalidPlaybackQueue)
+        await assertThrowsDomainError(.invalidPlaybackQueue) {
+            try await player.play([track], startingAt: 1)
         }
         let rejectedState = await player.state
         let rejectedQueue = await player.queue
@@ -457,12 +477,12 @@ final class ProtocolConformanceTests: XCTestCase {
         try await player.play(track)
         let singleQueue = await player.queue
         XCTAssertEqual(singleQueue, try PlaybackQueue(tracks: [track]))
-        XCTAssertThrowsError(try await player.next()) { error in
-            XCTAssertEqual(error as? DomainError, .playback(.queueBoundary))
+        await assertThrowsDomainError(.playback(.queueBoundary)) {
+            try await player.next()
         }
         try await player.stop()
-        XCTAssertThrowsError(try await player.previous()) { error in
-            XCTAssertEqual(error as? DomainError, .playback(.notReady))
+        await assertThrowsDomainError(.playback(.notReady)) {
+            try await player.previous()
         }
     }
 
