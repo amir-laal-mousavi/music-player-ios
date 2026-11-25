@@ -74,7 +74,7 @@ public actor LibraryFileStore {
 
     public static func systemAvailableCapacity(for directory: URL) throws -> Int64 {
         let attributes = try FileManager.default.attributesOfFileSystem(forPath: directory.path)
-        guard let capacity = attributes[.systemFreeSpace] as? NSNumber else {
+        guard let capacity = attributes[.systemFreeSize] as? NSNumber else {
             throw DomainError.library(.unavailable)
         }
         return capacity.int64Value
@@ -111,7 +111,7 @@ public actor LibraryFileStore {
         defer { close(sourceFD) }
 
         let sourceInfo = try fileInfo(sourceFD)
-        guard S_ISREG(sourceInfo.st_mode), sourceInfo.st_nlink == 1, sourceInfo.st_size >= 0 else {
+        guard (sourceInfo.st_mode & S_IFMT) == S_IFREG, sourceInfo.st_nlink == 1, sourceInfo.st_size >= 0 else {
             throw DomainError.library(.corruptData)
         }
         let size = sourceInfo.st_size
@@ -178,7 +178,7 @@ public actor LibraryFileStore {
         let name = standardized.lastPathComponent
         let info = try fstatat(rootFD, name, AT_SYMLINK_NOFOLLOW)
         guard info.st_mode != 0 else { return }
-        guard S_ISREG(info.st_mode), info.st_nlink == 1 else {
+        guard (info.st_mode & S_IFMT) == S_IFREG, info.st_nlink == 1 else {
             throw DomainError.library(.corruptData)
         }
         guard unlinkat(rootFD, name, 0) == 0 || errno == ENOENT else {
@@ -218,7 +218,7 @@ public actor LibraryFileStore {
             guard isPartial || isOrphan else { continue }
             let info = try fstatat(rootFD, name, AT_SYMLINK_NOFOLLOW)
             guard info.st_mode != 0 else { continue }
-            guard S_ISREG(info.st_mode), info.st_nlink == 1 else { continue }
+            guard (info.st_mode & S_IFMT) == S_IFREG, info.st_nlink == 1 else { continue }
             guard unlinkat(rootFD, name, 0) == 0 || errno == ENOENT else {
                 throw DomainError.library(.writeFailed)
             }
@@ -243,7 +243,7 @@ public actor LibraryFileStore {
         let fd = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else { throw DomainError.library(.writeFailed) }
         let info = try fileInfo(fd)
-        guard S_ISDIR(info.st_mode) else {
+        guard (info.st_mode & S_IFMT) == S_IFDIR else {
             close(fd)
             throw DomainError.library(.corruptData)
         }
@@ -258,7 +258,7 @@ public actor LibraryFileStore {
 
     private func fstatat(_ directoryFD: Int32, _ name: String, _ flags: Int32) throws -> stat {
         var info = stat()
-        guard fstatat(directoryFD, name, &info, flags) == 0 else {
+        guard Darwin.fstatat(directoryFD, name, &info, flags) == 0 else {
             if errno == ENOENT {
                 info.st_mode = 0
                 return info

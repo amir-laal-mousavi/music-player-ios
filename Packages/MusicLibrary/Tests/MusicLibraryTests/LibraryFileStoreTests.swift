@@ -4,6 +4,13 @@ import XCTest
 @testable import MusicLibrary
 
 final class LibraryFileStoreTests: XCTestCase {
+    func testSystemAvailableCapacityIsAvailableForDirectory() throws {
+        let root = try TestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertGreaterThanOrEqual(try LibraryFileStore.systemAvailableCapacity(for: root), 0)
+    }
+
     func testImportUsesUniqueGeneratedNamesAndPreservesSource() async throws {
         let root = try TestSupport.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

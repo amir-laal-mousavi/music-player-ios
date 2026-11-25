@@ -7,8 +7,8 @@ struct ImportJobSnapshot: Codable {
 
     let version: Int
     let id: UUID
-    let sourceChat: ChatSnapshot
-    let items: [ItemSnapshot]
+    fileprivate let sourceChat: ChatSnapshot
+    fileprivate let items: [ItemSnapshot]
     let status: String
     let createdAt: Date
     let updatedAt: Date

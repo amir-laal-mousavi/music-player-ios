@@ -47,7 +47,7 @@ public actor ImportCoordinator {
                     to: String(describing: ImportJobStatus.pausing)
                 )
             }
-            return try job.transition(to: .pausing, updatedAt: timestamp(after: job.updatedAt))
+            return try job.transition(to: .pausing, updatedAt: self.timestamp(after: job.updatedAt))
         }
         pendingJobIDs.removeAll { $0 == jobID }
         let taskToken = taskTokens[jobID]
@@ -68,10 +68,10 @@ public actor ImportCoordinator {
             let resumable: ImportJob
             switch job.status {
             case .paused:
-                resumable = try job.transition(to: .active, updatedAt: timestamp(after: job.updatedAt))
+                resumable = try job.transition(to: .active, updatedAt: self.timestamp(after: job.updatedAt))
             case .waitingToResume:
-                let queued = try job.transition(to: .queued, updatedAt: timestamp(after: job.updatedAt))
-                resumable = try queued.transition(to: .active, updatedAt: timestamp(after: queued.updatedAt))
+                let queued = try job.transition(to: .queued, updatedAt: self.timestamp(after: job.updatedAt))
+                resumable = try queued.transition(to: .active, updatedAt: self.timestamp(after: queued.updatedAt))
             default:
                 throw DomainError.invalidStateTransition(
                     from: String(describing: job.status),
@@ -95,7 +95,7 @@ public actor ImportCoordinator {
             }
             let normalized: ImportJob
             if job.status == .waitingToResume {
-                let queued = try job.transition(to: .queued, updatedAt: timestamp(after: job.updatedAt))
+                let queued = try job.transition(to: .queued, updatedAt: self.timestamp(after: job.updatedAt))
                 normalized = queued
             } else {
                 normalized = job
@@ -112,7 +112,7 @@ public actor ImportCoordinator {
                 items: items,
                 status: .cancelled,
                 createdAt: normalized.createdAt,
-                updatedAt: timestamp(after: normalized.updatedAt)
+                updatedAt: self.timestamp(after: normalized.updatedAt)
             )
         }
         pendingJobIDs.removeAll { $0 == jobID }
@@ -131,7 +131,7 @@ public actor ImportCoordinator {
         let taskToken = taskTokens[jobID]
         if let taskToken { await tasks[taskToken]?.value }
         let queued = try await changeJob(jobID) { job in
-            try job.transition(to: .queued, updatedAt: timestamp(after: job.updatedAt))
+            try job.transition(to: .queued, updatedAt: self.timestamp(after: job.updatedAt))
         }
         start(jobID)
         return queued
@@ -156,20 +156,20 @@ public actor ImportCoordinator {
             case .active, .waitingToResume:
                 _ = try await changeJob(job.id) { current in
                     guard current.status == .active || current.status == .waitingToResume else { return current }
-                    let normalized = try resetImportingItems(current)
+                    let normalized = try self.resetImportingItems(current)
                     if normalized.status == .waitingToResume {
                         return try normalized.transition(
                             to: .queued,
-                            updatedAt: timestamp(after: normalized.updatedAt)
+                            updatedAt: self.timestamp(after: normalized.updatedAt)
                         )
                     }
                     let waiting = try normalized.transition(
                         to: .waitingToResume,
-                        updatedAt: timestamp(after: normalized.updatedAt)
+                        updatedAt: self.timestamp(after: normalized.updatedAt)
                     )
                     return try waiting.transition(
                         to: .queued,
-                        updatedAt: timestamp(after: waiting.updatedAt)
+                        updatedAt: self.timestamp(after: waiting.updatedAt)
                     )
                 }
                 start(job.id)
@@ -226,8 +226,8 @@ public actor ImportCoordinator {
     private func finishPause(_ jobID: ImportJob.ID) async throws -> ImportJob {
         _ = try await changeJob(jobID) { job in
             guard job.status == .pausing else { return job }
-            let normalized = try resetImportingItems(job)
-            return try normalized.transition(to: .paused, updatedAt: timestamp(after: normalized.updatedAt))
+            let normalized = try self.resetImportingItems(job)
+            return try normalized.transition(to: .paused, updatedAt: self.timestamp(after: normalized.updatedAt))
         }
         return try await store.importJob(id: jobID)
     }
@@ -289,14 +289,14 @@ public actor ImportCoordinator {
                         guard current.status == .queued || current.status == .paused else { return current }
                         return try current.transition(
                             to: .waitingToResume,
-                            updatedAt: timestamp(after: current.updatedAt)
+                            updatedAt: self.timestamp(after: current.updatedAt)
                         )
                     }
                     return
                 }
                 job = try await changeJob(jobID) { current in
                     guard current.status == .queued || current.status == .paused else { return current }
-                    return try current.transition(to: .active, updatedAt: timestamp(after: current.updatedAt))
+                    return try current.transition(to: .active, updatedAt: self.timestamp(after: current.updatedAt))
                 }
             }
             guard job.status == .active else { return }
@@ -322,7 +322,7 @@ public actor ImportCoordinator {
                 guard finished.status == .active else { return finished }
                 let allImported = finished.items.allSatisfy { $0.status == .imported || $0.status == .duplicate }
                 let status: ImportJobStatus = allImported ? .completed : .partialFailure
-                return try finished.transition(to: status, updatedAt: timestamp(after: finished.updatedAt))
+                return try finished.transition(to: status, updatedAt: self.timestamp(after: finished.updatedAt))
             }
         } catch {
             try? await settleCancellation(jobID)
@@ -337,7 +337,7 @@ public actor ImportCoordinator {
             let currentItem = latest.items[index]
             guard currentItem.status == .importing else { return latest }
             let waiting = try currentItem.transition(to: .waiting, progress: currentItem.progress)
-            return try replacing(waiting, in: latest)
+            return try self.replacing(waiting, in: latest)
         }
         var item = current.items[index]
         guard current.status == .active, item.status == .waiting else { return }
@@ -353,7 +353,7 @@ public actor ImportCoordinator {
             let currentItem = latest.items[index]
             guard currentItem.status == .waiting else { return latest }
             let importing = try currentItem.transition(to: .importing)
-            return try replacing(importing, in: latest)
+            return try self.replacing(importing, in: latest)
         }
         item = current.items[index]
         guard current.status == .active, item.status == .importing else { return }
@@ -413,7 +413,7 @@ public actor ImportCoordinator {
                     progress: currentItem.progress,
                     trackID: track.id
                 )
-                return try replacing(imported, in: latest)
+                return try self.replacing(imported, in: latest)
             }
         } catch {
             if let insertedTrackID {
@@ -457,7 +457,7 @@ public actor ImportCoordinator {
             guard item.status == .importing,
                   progress.completedBytes >= (item.progress?.completedBytes ?? 0) else { return job }
             let updatedItem = try ImportItem(audio: item.audio, status: .importing, progress: progress)
-            return try replacing(updatedItem, in: job)
+            return try self.replacing(updatedItem, in: job)
         }
     }
 
@@ -466,8 +466,8 @@ public actor ImportCoordinator {
     }
 
     private func waitForProgressTasks(_ jobID: ImportJob.ID) async {
-        while let pending = progressTasks[jobID]?.task {
-            await pending.value
+        while let pending = progressTasks[jobID] {
+            await pending.task.value
             if progressTasks[jobID]?.token == pending.token { progressTasks[jobID] = nil }
         }
     }
@@ -484,7 +484,7 @@ public actor ImportCoordinator {
                 return latest
             }
             let duplicate = try latest.items[index].transition(to: .duplicate, trackID: trackID)
-            return try replacing(duplicate, in: latest)
+            return try self.replacing(duplicate, in: latest)
         }
     }
 
@@ -497,24 +497,24 @@ public actor ImportCoordinator {
             guard latest.status == .active, latest.items.indices.contains(index) else { return latest }
             let item = latest.items[index]
             guard item.status == .waiting || item.status == .importing else { return latest }
-            if isConnectivityError(error) {
-                let normalized = try resetImportingItems(latest)
+            if self.isConnectivityError(error) {
+                let normalized = try self.resetImportingItems(latest)
                 return try normalized.transition(
                     to: .waitingToResume,
-                    updatedAt: timestamp(after: normalized.updatedAt)
+                    updatedAt: self.timestamp(after: normalized.updatedAt)
                 )
             }
             let failed = try item.transition(to: .failed, progress: item.progress, error: error)
-            return try replacing(failed, in: latest)
+            return try self.replacing(failed, in: latest)
         }
     }
 
     private func settleCancellation(_ jobID: ImportJob.ID) async throws {
         _ = try await changeJob(jobID) { job in
             guard job.status == .pausing || job.status == .active else { return job }
-            let normalized = try resetImportingItems(job)
+            let normalized = try self.resetImportingItems(job)
             let status: ImportJobStatus = job.status == .pausing ? .paused : .waitingToResume
-            return try normalized.transition(to: status, updatedAt: timestamp(after: normalized.updatedAt))
+            return try normalized.transition(to: status, updatedAt: self.timestamp(after: normalized.updatedAt))
         }
     }
 

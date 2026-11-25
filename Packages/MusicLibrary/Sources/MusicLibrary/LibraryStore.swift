@@ -44,7 +44,7 @@ public actor SwiftDataLibraryStore: LibraryStore {
     }
 
     public func tracks() async throws -> [Track] {
-        loadTracks()
+        try loadTracks()
     }
 
     var trackObserverCount: Int { trackObservers.count }
@@ -76,7 +76,7 @@ public actor SwiftDataLibraryStore: LibraryStore {
     }
 
     public func insertTrack(_ track: Track) async throws {
-        if try await track(for: track.telegramIdentity) != nil {
+        if try await self.track(for: track.telegramIdentity) != nil {
             throw DomainError.duplicateTrack(track.telegramIdentity)
         }
         let context = ModelContext(container)
@@ -85,7 +85,7 @@ public actor SwiftDataLibraryStore: LibraryStore {
             try context.save()
         } catch {
             context.rollback()
-            if try await track(for: track.telegramIdentity) != nil {
+            if try await self.track(for: track.telegramIdentity) != nil {
                 throw DomainError.duplicateTrack(track.telegramIdentity)
             }
             throw DomainError.library(.writeFailed)
@@ -110,7 +110,7 @@ public actor SwiftDataLibraryStore: LibraryStore {
     }
 
     public func importJobs() async throws -> [ImportJob] {
-        loadJobs()
+        try loadJobs()
     }
 
     var jobObserverCount: Int { jobObservers.count }
@@ -136,7 +136,8 @@ public actor SwiftDataLibraryStore: LibraryStore {
 
     public func saveImportJob(_ job: ImportJob) async throws {
         let context = ModelContext(container)
-        let descriptor = FetchDescriptor<PersistedImportJob>(predicate: #Predicate { $0.id == job.id })
+        let jobID = job.id
+        let descriptor = FetchDescriptor<PersistedImportJob>(predicate: #Predicate { $0.id == jobID })
         do {
             if let record = try context.fetch(descriptor).first {
                 let persisted = try record.value()

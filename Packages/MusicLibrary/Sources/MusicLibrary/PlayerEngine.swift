@@ -50,7 +50,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         try configureAudioSession()
         eventTask = Task { [weak self] in
             for await event in backing.events {
-                await self?.process(event)
+                try? await self?.process(event)
             }
         }
         #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
@@ -142,7 +142,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         } catch {
             guard controlGeneration == token, state.status == .playing || state.status == .loading else { return }
             let error = domainError(error)
-            fail(error)
+            try fail(error)
             throw error
         }
     }
@@ -168,7 +168,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         } catch {
             guard controlGeneration == token else { return }
             let error = domainError(error)
-            fail(error)
+            try fail(error)
             throw error
         }
     }
@@ -186,7 +186,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         } catch {
             guard controlGeneration == token else { return }
             let error = domainError(error)
-            fail(error)
+            try fail(error)
             throw error
         }
     }
@@ -211,7 +211,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         } catch {
             guard controlGeneration == token else { return }
             let error = domainError(error)
-            fail(error)
+            try fail(error)
             throw error
         }
     }
@@ -235,7 +235,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         } catch {
             guard controlGeneration == token else { return }
             let error = domainError(error)
-            fail(error)
+            try fail(error)
             throw error
         }
     }
@@ -258,17 +258,17 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
             guard generation == token, controlGeneration == controlToken, state.status == .loading else { return }
             pendingAutoplay = false
             let error = domainError(error)
-            fail(error)
+            try fail(error)
             throw error
         }
     }
 
-    private func process(_ event: PlaybackBackingEvent) async {
+    private func process(_ event: PlaybackBackingEvent) async throws {
         guard event.generation == generation else { return }
-        await handle(event.kind)
+        try await handle(event.kind)
     }
 
-    private func handle(_ event: PlaybackBackingEvent.Kind) async {
+    private func handle(_ event: PlaybackBackingEvent.Kind) async throws {
         switch event {
         case let .ready(duration):
             guard duration.isFinite, duration >= 0,
@@ -286,7 +286,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
                 do {
                     try await startPlayback()
                 } catch {
-                    fail(domainError(error))
+                    try fail(domainError(error))
                 }
             }
         case .playing:
@@ -328,7 +328,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
                 duration: state.duration
             ))
         case let .failed(error):
-            fail(.playback(error))
+            try fail(.playback(error))
         }
     }
 
@@ -351,7 +351,7 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         ))
     }
 
-    private func fail(_ error: DomainError) {
+    private func fail(_ error: DomainError) throws {
         pendingAutoplay = false
         publish(try PlaybackState(
             status: .failed,
@@ -516,7 +516,7 @@ actor AVPlayerBacking: PlaybackBacking {
     func stop() async throws {
         removeObservers()
         player?.pause()
-        player?.replaceCurrentItem(withNil())
+        player?.replaceCurrentItem(with: nil)
         player = nil
     }
 
@@ -528,7 +528,7 @@ actor AVPlayerBacking: PlaybackBacking {
             guard duration.isFinite, duration >= 0 else { return }
             emit(generation, .ready(duration: duration))
         case .failed:
-            let playerError: PlayerError = errorCode == AVError.fileFormatUnsupported.rawValue
+            let playerError: PlayerError = errorCode == AVError.Code.fileFormatUnsupported.rawValue
                 ? .unsupportedFormat : .fileUnavailable
             emit(generation, .failed(playerError))
         case .unknown:
