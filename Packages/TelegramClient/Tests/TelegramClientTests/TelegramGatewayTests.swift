@@ -84,6 +84,40 @@ final class TelegramGatewayTests: XCTestCase {
         try await waitForAuth(.waitingForPhone, from: gateway)
     }
 
+    func testDefaultWorkspaceUsesStableApplicationSupportPath() throws {
+        let first = try TelegramGatewayClient.defaultWorkspaceDirectory()
+        let second = try TelegramGatewayClient.defaultWorkspaceDirectory()
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.lastPathComponent, "TelegramClient")
+        let applicationSupport = try XCTUnwrap(FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first)
+        XCTAssertEqual(first.deletingLastPathComponent(), applicationSupport)
+    }
+
+    func testPersistentWorkspaceConfigurationReusesSelectedPathAndStoredKey() throws {
+        var storedKeys: [URL: Data] = [:]
+        func loadOrCreateKey(_ workspace: URL) throws -> Data {
+            if let key = storedKeys[workspace] { return key }
+            let key = testDatabaseEncryptionKey
+            storedKeys[workspace] = key
+            return key
+        }
+        let first = try TelegramGatewayClient.persistentWorkspaceConfiguration(
+            workspaceDirectory: workspace,
+            loadOrCreateKey: loadOrCreateKey
+        )
+        let second = try TelegramGatewayClient.persistentWorkspaceConfiguration(
+            workspaceDirectory: workspace,
+            loadOrCreateKey: loadOrCreateKey
+        )
+        XCTAssertEqual(first.workspace, second.workspace)
+        XCTAssertEqual(first.workspace, workspace.resolvingSymlinksInPath().standardizedFileURL)
+        XCTAssertEqual(first.encryptionKey, second.encryptionKey)
+        XCTAssertEqual(storedKeys.count, 1)
+    }
+
     func testChatsAndBackwardAudioHistory() async throws {
         let chatID = -Int64(String(repeating: "1", count: 6))!
         let (gateway, transport) = try await makeAuthenticatedGateway { [weak transport] record in

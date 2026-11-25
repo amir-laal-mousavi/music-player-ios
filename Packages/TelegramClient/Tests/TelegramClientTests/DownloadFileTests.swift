@@ -95,6 +95,26 @@ final class DownloadFileTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.url.path).isEmpty)
     }
 
+    func testReplacedSourceRootSymlinkIsRejected() async throws {
+        let sourceRoot = root.appendingPathComponent("source")
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let source = outside.appendingPathComponent("cache-file")
+        try Data("outside".utf8).write(to: source)
+        try FileManager.default.createSymbolicLink(at: sourceRoot, withDestinationURL: outside)
+        let directory = try SafeDownloadDirectory(directory: root.appendingPathComponent("destination"))
+        await assertDomainError(.telegram(.downloadFailed)) {
+            try directory.stage(
+                source: sourceRoot.appendingPathComponent("cache-file"),
+                sourceRoot: sourceRoot,
+                expectedSize: 7,
+                fileExtension: nil,
+                cancellation: DownloadCancellationToken()
+            )
+        }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.url.path).isEmpty)
+    }
+
     func testSizeMismatchRemovesPartialStagingFile() async throws {
         let sourceRoot = root.appendingPathComponent("source")
         try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)

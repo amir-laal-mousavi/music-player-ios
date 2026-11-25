@@ -151,6 +151,15 @@ final class TDLibMappingTests: XCTestCase {
         }
     }
 
+    func testIntegerFieldsRejectFractionalAndOutOfRangeNumbers() throws {
+        for value in [1.5, Double(Int64.max) * 2] {
+            let object = try TDLibJSON.object(from: SyntheticFixtures.encoded(["id": value]))
+            XCTAssertThrowsError(try TDLibJSON.int64(object["id"])) { error in
+                XCTAssertEqual(error as? DomainError, .telegram(.invalidResponse))
+            }
+        }
+    }
+
     func testProgressUsesExpectedSizeAndClampsToKnownTotal() throws {
         var object = SyntheticFixtures.file(size: 0, downloaded: 20)
         object["expected_size"] = 12
