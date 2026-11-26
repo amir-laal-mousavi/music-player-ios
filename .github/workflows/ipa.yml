@@ -5,6 +5,11 @@ name: Build unsigned IPA
 # needed here: the installer signs the app with the tester's own Apple ID.
 on:
   workflow_dispatch:
+  # Tag pushes trigger a build from any branch; workflow_dispatch only works once
+  # this file is on the repository's default branch.
+  push:
+    tags:
+      - "ipa-*"
 
 concurrency:
   group: ipa-${{ github.ref }}
