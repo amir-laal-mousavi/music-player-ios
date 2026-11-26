@@ -423,7 +423,8 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
         guard let info = notification.userInfo,
               let reasonValue = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
-              reason == .oldDeviceUnavailable || reason == .newDeviceUnavailable else { return }
+              // Only a lost output device (unplugged headphones, disconnected CarPlay) interrupts playback.
+              reason == .oldDeviceUnavailable else { return }
         try? await interrupt(reason: .routeChange)
     }
     #endif
