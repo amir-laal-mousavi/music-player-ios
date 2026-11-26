@@ -167,9 +167,22 @@ final class TelegramGatewayTests: XCTestCase {
         let (gateway, transport) = try await makeAuthenticatedGateway { transport, record in
             guard record.type == "getChatHistory" else { return }
             let before = record.object["from_message_id"] as? Int ?? 0
-            let messages: [Any] = before == 0
-                ? [SyntheticFixtures.textMessage(id: 20, chatID: 1)]
-                : (before == 20 ? [SyntheticFixtures.audioMessage(id: 10, chatID: 1)] : [])
+            // Full batches show that a short batch, not a text-only one, ends the history.
+            let messages: [Any]
+            switch before {
+            case 0:
+                messages = [
+                    SyntheticFixtures.textMessage(id: 21, chatID: 1),
+                    SyntheticFixtures.textMessage(id: 20, chatID: 1)
+                ]
+            case 20:
+                messages = [
+                    SyntheticFixtures.textMessage(id: 19, chatID: 1),
+                    SyntheticFixtures.audioMessage(id: 10, chatID: 1)
+                ]
+            default:
+                messages = []
+            }
             transport.respond(["@type": "messages", "messages": messages], to: record)
         }
         let request = try TelegramAudioPageRequest(chatID: 1, beforeMessageID: nil, limit: 2)
@@ -655,13 +668,12 @@ final class TelegramGatewayTests: XCTestCase {
         _ recorder: ProgressRecorder,
         count: Int
     ) async throws -> [DownloadProgress] {
+        // An AsyncStream is exhausted once its iterator goes away, so poll the recorded values.
         try await withTimeout {
-            var values: [DownloadProgress] = []
-            for await value in recorder.updates {
-                values.append(value)
-                if values.count == count { return values }
+            while recorder.snapshot().count < count {
+                try await Task.sleep(nanoseconds: 10_000_000)
             }
-            throw TestFailure.timedOut
+            return recorder.snapshot()
         }
     }
 
