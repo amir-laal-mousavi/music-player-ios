@@ -75,8 +75,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
           cd "$RUNNER_TEMP/ipa"
-          ditto -c -k --sequesterRsrc --keepParent Payload MusicPlayer.ipa
-          ls -lh MusicPlayer.ipa
+          ditto -c -k --sequesterRsrc --keepParent Payload "$RUNNER_TEMP/MusicPlayer.ipa"
+          ls -lh "$RUNNER_TEMP/MusicPlayer.ipa"
 
       - uses: actions/upload-artifact@v4
         with:
