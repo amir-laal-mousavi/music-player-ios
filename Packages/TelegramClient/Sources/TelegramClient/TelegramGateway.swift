@@ -436,12 +436,13 @@ public actor TelegramGatewayClient: TelegramGateway {
                 handleFileUpdate(object)
                 return
             }
-            if type == "ok" || type == "error" {
-                guard let extra = object["@extra"] as? String else {
-                    throw TDLibJSON.invalidResponse
-                }
+            if let extra = object["@extra"] as? String {
                 finishPendingRequest(extra, object: object)
                 return
+            }
+            if type == "ok" || type == "error" {
+                // @extra was absent — malformed response from TDLib
+                throw TDLibJSON.invalidResponse
             }
             if type == "updateAuthorizationState" {
                 let state = try TDLibMapper.authorizationStateObject(from: object)
