@@ -208,11 +208,13 @@ public actor TelegramGatewayClient: TelegramGateway {
             )
             let response = try responseObject(data, expectedType: "messages")
             let batch = try TDLibJSON.array(response["messages"])
+            // A batch shorter than the requested limit is the end of the chat's history.
+            let isFinalBatch = batch.count < request.limit
             let page = try TDLibMapper.page(messages: batch, request: request)
             for audio in page.messages where seen.insert(audio.messageID).inserted {
                 messages.append(audio)
             }
-            if messages.count >= request.limit { break }
+            if messages.count >= request.limit || isFinalBatch { break }
             guard let oldest = try TDLibMapper.oldestMessageID(
                 messages: batch,
                 chatID: request.chatID,

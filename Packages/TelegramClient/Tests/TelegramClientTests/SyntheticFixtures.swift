@@ -38,6 +38,7 @@ internal enum SyntheticFixtures {
         downloaded: Int64 = 0
     ) -> [String: Any] {
         [
+            "@type": "file",
             "id": id,
             "size": size,
             "expected_size": size,
