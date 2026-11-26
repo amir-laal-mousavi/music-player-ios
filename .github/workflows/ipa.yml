@@ -1,0 +1,81 @@
+name: Build unsigned IPA
+
+# Produces an unsigned, device-ready .ipa for sideloading with a free Apple ID
+# (Sideloadly / AltStore). No Apple Developer Program and no signing secrets are
+# needed here: the installer signs the app with the tester's own Apple ID.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Resolve package dependencies
+        run: |
+          set -o pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project MusicPlayer.xcodeproj \
+            -scheme MusicPlayer
+
+      - name: Archive for device (unsigned)
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project MusicPlayer.xcodeproj \
+            -scheme MusicPlayer \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/MusicPlayer.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            TELEGRAM_API_ID="$TELEGRAM_API_ID" \
+            TELEGRAM_API_HASH="$TELEGRAM_API_HASH" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/MusicPlayer.xcarchive/Products/Applications/MusicPlayer.app"
+          if [ ! -d "$APP" ]; then
+            echo "Archive did not produce MusicPlayer.app" >&2
+            exit 1
+          fi
+
+          echo "Bundle identifier: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
+          echo "Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist") ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist"))"
+          echo "Minimum iOS: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")"
+
+          API_ID="$(/usr/libexec/PlistBuddy -c 'Print :TelegramAPIID' "$APP/Info.plist" 2>/dev/null || true)"
+          if [ -z "$API_ID" ] || [ "${API_ID#\$(}" != "$API_ID" ]; then
+            echo "::warning::Telegram credentials are not configured. The app will show the setup screen instead of sign-in. Add TELEGRAM_API_ID and TELEGRAM_API_HASH repository secrets and re-run this workflow."
+          else
+            echo "Telegram credentials: configured (api_id $API_ID)"
+          fi
+
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          ditto -c -k --sequesterRsrc --keepParent Payload MusicPlayer.ipa
+          ls -lh MusicPlayer.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MusicPlayer-unsigned-ipa
+          path: ${{ runner.temp }}/MusicPlayer.ipa
+          if-no-files-found: error
+          retention-days: 14
