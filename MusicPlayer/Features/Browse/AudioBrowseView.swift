@@ -3,8 +3,26 @@ import SwiftUI
 
 struct AudioBrowseView: View {
     let environment: AppEnvironment
-    @Bindable var model: AudioBrowseViewModel
     let onImported: (ImportJob) -> Void
+
+    @State private var model: AudioBrowseViewModel
+
+    init(
+        environment: AppEnvironment,
+        chat: TelegramChat,
+        onImported: @escaping (ImportJob) -> Void
+    ) {
+        self.environment = environment
+        self.onImported = onImported
+        _model = State(
+            initialValue: AudioBrowseViewModel(
+                chat: chat,
+                gateway: environment.gateway,
+                store: environment.store,
+                coordinator: environment.coordinator
+            )
+        )
+    }
 
     var body: some View {
         Group {
