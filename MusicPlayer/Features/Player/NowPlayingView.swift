@@ -4,10 +4,15 @@ import UIKit
 
 struct NowPlayingView: View {
     @Bindable var model: NowPlayingViewModel
+    @Bindable var equalizer: EqualizerStore
+    let isFavorite: (Track) -> Bool
+    let onToggleFavorite: (Track) -> Void
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var artworkImage: UIImage?
+    @State private var isShowingEqualizer = false
 
     var body: some View {
         NavigationStack {
@@ -39,8 +44,33 @@ struct NowPlayingView: View {
                     }
                     .accessibilityLabel("Close player")
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isShowingEqualizer = true
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .accessibilityLabel("Equalizer")
+                    .accessibilityIdentifier("player.equalizer")
+                }
+                if let track = model.currentTrack {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            onToggleFavorite(track)
+                        } label: {
+                            Image(systemName: isFavorite(track) ? "heart.fill" : "heart")
+                        }
+                        .tint(isFavorite(track) ? .pink : .white)
+                        .accessibilityIdentifier("player.favorite")
+                    }
+                }
             }
             .task { await model.start() }
+            .sheet(isPresented: $isShowingEqualizer) {
+                EqualizerView(store: equalizer) { settings in
+                    Task { await model.applyEqualizer(settings) }
+                }
+            }
             .task(id: model.currentTrack?.artworkURL) {
                 artworkImage = await ArtworkImageCache.shared.image(for: model.currentTrack?.artworkURL)
             }

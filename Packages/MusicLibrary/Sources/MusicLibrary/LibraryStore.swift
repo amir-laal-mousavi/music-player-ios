@@ -6,6 +6,8 @@ public actor SwiftDataLibraryStore: LibraryStore {
     private let container: ModelContainer
     private var trackObservers: [UUID: AsyncStream<[Track]>.Continuation] = [:]
     private var jobObservers: [UUID: AsyncStream<[ImportJob]>.Continuation] = [:]
+    private var favoriteObservers: [UUID: AsyncStream<Set<Track.ID>>.Continuation] = [:]
+    private var playlistObservers: [UUID: AsyncStream<[Playlist]>.Continuation] = [:]
 
     public init(container: ModelContainer) {
         self.container = container
@@ -19,7 +21,12 @@ public actor SwiftDataLibraryStore: LibraryStore {
         inMemory: Bool = false,
         storageURL: URL? = nil
     ) throws -> ModelContainer {
-        let schema = Schema([PersistedTrack.self, PersistedImportJob.self])
+        let schema = Schema([
+            PersistedTrack.self,
+            PersistedImportJob.self,
+            PersistedFavorite.self,
+            PersistedPlaylist.self
+        ])
         let configuration: ModelConfiguration
         if inMemory {
             configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -100,6 +107,15 @@ public actor SwiftDataLibraryStore: LibraryStore {
             throw DomainError.trackNotFound(id)
         }
         context.delete(record)
+        let favorites = try context.fetch(
+            FetchDescriptor<PersistedFavorite>(predicate: #Predicate { $0.trackID == id })
+        )
+        favorites.forEach(context.delete)
+        let playlists = try context.fetch(FetchDescriptor<PersistedPlaylist>())
+        for playlist in playlists where playlist.trackIDs.contains(id) {
+            playlist.trackIDs.removeAll { $0 == id }
+            playlist.updatedAt = Date()
+        }
         do {
             try context.save()
         } catch {
@@ -107,6 +123,8 @@ public actor SwiftDataLibraryStore: LibraryStore {
             throw DomainError.library(.writeFailed)
         }
         await publishTracks()
+        await publishFavorites()
+        await publishPlaylists()
     }
 
     public func importJobs() async throws -> [ImportJob] {
@@ -312,4 +330,192 @@ private extension Array where Element: Identifiable {
             return date($0) > date($1)
         }
     }
+    // MARK: - Favorites
+
+    public func favoriteTrackIDs() async throws -> Set<Track.ID> {
+        try loadFavorites()
+    }
+
+    nonisolated public func observeFavoriteTrackIDs() -> AsyncStream<Set<Track.ID>> {
+        AsyncStream { continuation in
+            let id = UUID()
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeFavoriteObserver(id) }
+            }
+            Task { await self.addFavoriteObserver(id, continuation: continuation) }
+        }
+    }
+
+    public func setFavorite(_ isFavorite: Bool, forTrack id: Track.ID) async throws {
+        let context = ModelContext(container)
+        let descriptor = FetchDescriptor<PersistedFavorite>(predicate: #Predicate { $0.trackID == id })
+        let existing = try context.fetch(descriptor)
+        if isFavorite {
+            if existing.isEmpty {
+                let trackDescriptor = FetchDescriptor<PersistedTrack>(predicate: #Predicate { $0.id == id })
+                guard try context.fetch(trackDescriptor).first != nil else {
+                    throw DomainError.trackNotFound(id)
+                }
+                context.insert(PersistedFavorite(trackID: id))
+            }
+        } else {
+            existing.forEach(context.delete)
+        }
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw DomainError.library(.writeFailed)
+        }
+        await publishFavorites()
+    }
+
+    func addFavoriteObserver(
+        _ id: UUID,
+        continuation: AsyncStream<Set<Track.ID>>.Continuation
+    ) async {
+        guard let snapshot = try? loadFavorites() else {
+            continuation.finish()
+            return
+        }
+        favoriteObservers[id] = continuation
+        if case .terminated = continuation.yield(snapshot) { favoriteObservers[id] = nil }
+    }
+
+    private func removeFavoriteObserver(_ id: UUID) {
+        favoriteObservers[id] = nil
+    }
+
+    private func publishFavorites() async {
+        guard let snapshot = try? loadFavorites() else {
+            for continuation in favoriteObservers.values { continuation.finish() }
+            favoriteObservers.removeAll()
+            return
+        }
+        for continuation in favoriteObservers.values { continuation.yield(snapshot) }
+    }
+
+    private func loadFavorites() throws -> Set<Track.ID> {
+        let context = ModelContext(container)
+        let records = try context.fetch(FetchDescriptor<PersistedFavorite>(sortBy: [SortDescriptor(\.createdAt)]))
+        return Set(records.map(\.trackID))
+    }
+
+    // MARK: - Playlists
+
+    public func playlists() async throws -> [Playlist] {
+        try loadPlaylists()
+    }
+
+    nonisolated public func observePlaylists() -> AsyncStream<[Playlist]> {
+        AsyncStream { continuation in
+            let id = UUID()
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removePlaylistObserver(id) }
+            }
+            Task { await self.addPlaylistObserver(id, continuation: continuation) }
+        }
+    }
+
+    public func createPlaylist(name: String) async throws -> Playlist {
+        let playlist = try Playlist(name: name)
+        let context = ModelContext(container)
+        context.insert(PersistedPlaylist(playlist: playlist))
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw DomainError.library(.writeFailed)
+        }
+        await publishPlaylists()
+        return playlist
+    }
+
+    public func deletePlaylist(id: Playlist.ID) async throws {
+        let context = ModelContext(container)
+        let descriptor = FetchDescriptor<PersistedPlaylist>(predicate: #Predicate { $0.id == id })
+        guard let record = try context.fetch(descriptor).first else {
+            throw DomainError.playlistNotFound(id)
+        }
+        context.delete(record)
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw DomainError.library(.writeFailed)
+        }
+        await publishPlaylists()
+    }
+
+    public func renamePlaylist(id: Playlist.ID, to name: String) async throws {
+        try await mutatePlaylist(id: id) { playlist in
+            try playlist.renamed(name)
+        }
+    }
+
+    public func addTracks(_ trackIDs: [Track.ID], toPlaylist id: Playlist.ID) async throws {
+        try await mutatePlaylist(id: id) { playlist in
+            try playlist.adding(trackIDs)
+        }
+    }
+
+    public func removeTrack(_ trackID: Track.ID, fromPlaylist id: Playlist.ID) async throws {
+        try await mutatePlaylist(id: id) { playlist in
+            try playlist.removing(trackID)
+        }
+    }
+
+    private func mutatePlaylist(
+        id: Playlist.ID,
+        change: (Playlist) throws -> Playlist
+    ) async throws {
+        let context = ModelContext(container)
+        let descriptor = FetchDescriptor<PersistedPlaylist>(predicate: #Predicate { $0.id == id })
+        guard let record = try context.fetch(descriptor).first else {
+            throw DomainError.playlistNotFound(id)
+        }
+        let updated = try change(try record.value())
+        record.update(with: updated)
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw DomainError.library(.writeFailed)
+        }
+        await publishPlaylists()
+    }
+
+    func addPlaylistObserver(
+        _ id: UUID,
+        continuation: AsyncStream<[Playlist]>.Continuation
+    ) async {
+        guard let snapshot = try? loadPlaylists() else {
+            continuation.finish()
+            return
+        }
+        playlistObservers[id] = continuation
+        if case .terminated = continuation.yield(snapshot) { playlistObservers[id] = nil }
+    }
+
+    private func removePlaylistObserver(_ id: UUID) {
+        playlistObservers[id] = nil
+    }
+
+    private func publishPlaylists() async {
+        guard let snapshot = try? loadPlaylists() else {
+            for continuation in playlistObservers.values { continuation.finish() }
+            playlistObservers.removeAll()
+            return
+        }
+        for continuation in playlistObservers.values { continuation.yield(snapshot) }
+    }
+
+    private func loadPlaylists() throws -> [Playlist] {
+        let context = ModelContext(container)
+        let records = try context.fetch(
+            FetchDescriptor<PersistedPlaylist>(sortBy: [SortDescriptor(\.createdAt)])
+        )
+        return try records.map { try $0.value() }
+    }
+
 }

@@ -4,10 +4,13 @@ import SwiftUI
 struct LibraryView: View {
     let environment: AppEnvironment
     @Bindable var model: LibraryViewModel
+    @Bindable var playlists: PlaylistsViewModel
     @Binding var isSearchPresented: Bool
     let onPlay: (NowPlayingRequest) -> Void
 
     @State private var pendingDeletion: Track?
+    @State private var trackToAdd: Track?
+    @State private var isShowingPlaylists = false
 
     var body: some View {
         Group {
@@ -17,7 +20,15 @@ struct LibraryView: View {
             } else if model.tracks.isEmpty {
                 emptyLibrary
             } else if model.filteredTracks.isEmpty {
-                ContentUnavailableView.search(text: model.query)
+                if model.showsFavoritesOnly && model.query.isEmpty {
+                    ContentUnavailableView {
+                        Label("No favorites yet", systemImage: "heart")
+                    } description: {
+                        Text("Swipe a song to the right to mark it as a favorite.")
+                    }
+                } else {
+                    ContentUnavailableView.search(text: model.query)
+                }
             } else {
                 trackList
             }
@@ -25,7 +36,39 @@ struct LibraryView: View {
         .navigationTitle("Library")
         .searchable(text: $model.query, isPresented: $isSearchPresented, prompt: "Search songs")
         .musicBarBackground()
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        model.toggleFavoritesFilter()
+                    } label: {
+                        Label(
+                            model.showsFavoritesOnly ? "Show all songs" : "Show favorites",
+                            systemImage: model.showsFavoritesOnly ? "heart.slash" : "heart"
+                        )
+                    }
+                    Button {
+                        isShowingPlaylists = true
+                    } label: {
+                        Label("Playlists", systemImage: "rectangle.stack")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityIdentifier("library.menu")
+            }
+        }
         .task { await model.start() }
+        .task { await playlists.start() }
+        .sheet(isPresented: $isShowingPlaylists) {
+            PlaylistsSheet(model: playlists, onPlay: { tracks, index in
+                isShowingPlaylists = false
+                onPlay(NowPlayingRequest(tracks: tracks, startingIndex: index))
+            })
+        }
+        .sheet(item: $trackToAdd) { track in
+            AddToPlaylistSheet(model: playlists, track: track)
+        }
         .overlay(alignment: .bottom) {
             if let errorMessage = model.errorMessage {
                 StatusBanner(kind: .error, message: errorMessage)
@@ -57,12 +100,29 @@ struct LibraryView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("library.row.\(track.telegramIdentity.messageID)")
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            Task { await model.toggleFavorite(track) }
+                        } label: {
+                            Label(
+                                model.isFavorite(track) ? "Unfavorite" : "Favorite",
+                                systemImage: model.isFavorite(track) ? "heart.slash.fill" : "heart.fill"
+                            )
+                        }
+                        .tint(.pink)
+                    }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             pendingDeletion = track
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
+                        Button {
+                            trackToAdd = track
+                        } label: {
+                            Label("Playlist", systemImage: "text.badge.plus")
+                        }
+                        .tint(.indigo)
                     }
                 }
             } header: {

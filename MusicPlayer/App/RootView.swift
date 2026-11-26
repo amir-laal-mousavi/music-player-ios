@@ -16,6 +16,8 @@ struct RootView: View {
     @State private var chats: ChatPickerViewModel
     @State private var fileImport: FileImportViewModel
     @State private var playback: NowPlayingViewModel
+    @State private var playlists: PlaylistsViewModel
+    @State private var equalizer: EqualizerStore
     @State private var network = NetworkStatus()
 
     @State private var selectedTab: AppTab = .library
@@ -49,6 +51,8 @@ struct RootView: View {
                 startingIndex: 0
             )
         )
+        _playlists = State(initialValue: PlaylistsViewModel(store: environment.store))
+        _equalizer = State(initialValue: environment.equalizer)
     }
 
     var body: some View {
@@ -57,6 +61,7 @@ struct RootView: View {
                 LibraryView(
                     environment: environment,
                     model: library,
+                    playlists: playlists,
                     isSearchPresented: $isSearchPresented,
                     onPlay: play
                 )
@@ -94,7 +99,14 @@ struct RootView: View {
             bottomBar
         }
         .sheet(isPresented: $isPlayerPresented) {
-            NowPlayingView(model: playback)
+            NowPlayingView(
+                model: playback,
+                equalizer: equalizer,
+                isFavorite: { library.isFavorite($0) },
+                onToggleFavorite: { track in
+                    Task { await library.toggleFavorite(track) }
+                }
+            )
         }
         .onOpenURL { url in
             // Another app ("Open in MusicPlayer") or Files handed us audio to import.
@@ -107,6 +119,7 @@ struct RootView: View {
         }
         .task {
             network.start()
+            await playback.applyEqualizer(equalizer.settings)
             await playback.start()
             await environment.prepare()
         }

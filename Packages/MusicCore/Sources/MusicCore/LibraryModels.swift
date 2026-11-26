@@ -230,3 +230,75 @@ public struct Track: Identifiable, Sendable, Equatable {
         self.artworkURL = artworkURL
     }
 }
+
+/// A user-created collection of library tracks, in play order.
+public struct Playlist: Identifiable, Sendable, Equatable {
+    public typealias ID = UUID
+    public static let maximumNameLength = 80
+
+    public let id: ID
+    public let name: String
+    public let trackIDs: [Track.ID]
+    public let createdAt: Date
+    public let updatedAt: Date
+
+    public init(
+        id: ID = UUID(),
+        name: String,
+        trackIDs: [Track.ID] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= Self.maximumNameLength else {
+            throw DomainError.invalidPlaylistName
+        }
+        guard Set(trackIDs).count == trackIDs.count else {
+            throw DomainError.invalidPlaylistTracks
+        }
+        guard createdAt.timeIntervalSince1970.isFinite,
+              updatedAt.timeIntervalSince1970.isFinite,
+              updatedAt >= createdAt else {
+            throw DomainError.invalidPlaylist
+        }
+        self.id = id
+        self.name = trimmed
+        self.trackIDs = trackIDs
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public func adding(_ trackIDs: [Track.ID], at date: Date = Date()) throws -> Playlist {
+        var next = self.trackIDs
+        for id in trackIDs where !next.contains(id) {
+            next.append(id)
+        }
+        return try Playlist(
+            id: id,
+            name: name,
+            trackIDs: next,
+            createdAt: createdAt,
+            updatedAt: max(date, updatedAt)
+        )
+    }
+
+    public func removing(_ trackID: Track.ID, at date: Date = Date()) throws -> Playlist {
+        try Playlist(
+            id: id,
+            name: name,
+            trackIDs: trackIDs.filter { $0 != trackID },
+            createdAt: createdAt,
+            updatedAt: max(date, updatedAt)
+        )
+    }
+
+    public func renamed(_ newName: String, at date: Date = Date()) throws -> Playlist {
+        try Playlist(
+            id: id,
+            name: newName,
+            trackIDs: trackIDs,
+            createdAt: createdAt,
+            updatedAt: max(date, updatedAt)
+        )
+    }
+}

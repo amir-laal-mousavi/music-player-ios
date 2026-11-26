@@ -10,6 +10,11 @@ protocol PlaybackBacking: Sendable {
     func pause() async throws
     func seek(to position: TimeInterval) async throws
     func stop() async throws
+    func applyEqualizer(_ settings: EqualizerSettings) async
+}
+
+extension PlaybackBacking {
+    func applyEqualizer(_ settings: EqualizerSettings) async {}
 }
 
 struct PlaybackBackingEvent: Sendable {
@@ -43,6 +48,11 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
 
     public convenience init() throws {
         try self.init(backing: AVPlayerBacking())
+    }
+
+    /// Playback through AVAudioEngine so the equalizer can shape the output.
+    public convenience init(equalizer: EqualizerSettings) throws {
+        try self.init(backing: AVAudioEngineBacking(settings: equalizer))
     }
 
     init(
@@ -350,6 +360,10 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
 
     public func setRepeatMode(_ mode: RepeatMode) async {
         repeatMode = mode
+    }
+
+    public func applyEqualizer(_ settings: EqualizerSettings) async {
+        await backing.applyEqualizer(settings)
     }
 
     public func setShuffled(_ shuffled: Bool) async {

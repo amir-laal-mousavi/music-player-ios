@@ -178,6 +178,10 @@ final class NowPlayingViewModel {
         repeatMode = next
     }
 
+    func applyEqualizer(_ settings: EqualizerSettings) async {
+        await player.applyEqualizer(settings)
+    }
+
     func toggleShuffle() async {
         let next = !isShuffled
         await player.setShuffled(next)

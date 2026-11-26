@@ -12,6 +12,7 @@ final class AppEnvironment {
     let store: any LibraryStore
     let fileStore: LibraryFileStore
     let artworkStore: ArtworkStore
+    let equalizer: EqualizerStore
     let coordinator: ImportCoordinator
     let player: any PlayerEngine
     let isUITesting: Bool
@@ -22,6 +23,7 @@ final class AppEnvironment {
         store: any LibraryStore,
         fileStore: LibraryFileStore,
         artworkStore: ArtworkStore,
+        equalizer: EqualizerStore,
         player: any PlayerEngine,
         isUITesting: Bool
     ) {
@@ -30,6 +32,7 @@ final class AppEnvironment {
         self.store = store
         self.fileStore = fileStore
         self.artworkStore = artworkStore
+        self.equalizer = equalizer
         self.player = player
         self.isUITesting = isUITesting
         self.coordinator = ImportCoordinator(
@@ -70,7 +73,8 @@ final class AppEnvironment {
         let store = SwiftDataLibraryStore(container: container)
         let fileStore = try LibraryFileStore()
         let artworkStore = try ArtworkStore()
-        let player = try AVFoundationPlayerEngine()
+        let equalizer = EqualizerStore()
+        let player = try AVFoundationPlayerEngine(equalizer: equalizer.settings)
 
         let configuration: AppConfiguration?
         let gateway: any TelegramGateway
@@ -93,6 +97,7 @@ final class AppEnvironment {
             store: store,
             fileStore: fileStore,
             artworkStore: artworkStore,
+            equalizer: equalizer,
             player: player,
             isUITesting: false
         )
@@ -113,6 +118,7 @@ final class AppEnvironment {
             artworkStore: try ArtworkStore(
                 directory: directory.appendingPathComponent("Artwork", isDirectory: true)
             ),
+            equalizer: EqualizerStore(),
             player: try AVFoundationPlayerEngine(),
             isUITesting: true
         )

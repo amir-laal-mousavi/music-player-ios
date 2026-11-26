@@ -41,6 +41,43 @@ public protocol LibraryStore: Sendable {
     func importJob(id: ImportJob.ID) async throws -> ImportJob
     /// Replaces the whole persisted job so item progress survives process restarts.
     func saveImportJob(_ job: ImportJob) async throws
+    func favoriteTrackIDs() async throws -> Set<Track.ID>
+    func observeFavoriteTrackIDs() -> AsyncStream<Set<Track.ID>>
+    func setFavorite(_ isFavorite: Bool, forTrack id: Track.ID) async throws
+    func playlists() async throws -> [Playlist]
+    func observePlaylists() -> AsyncStream<[Playlist]>
+    func createPlaylist(name: String) async throws -> Playlist
+    func deletePlaylist(id: Playlist.ID) async throws
+    func renamePlaylist(id: Playlist.ID, to name: String) async throws
+    func addTracks(_ trackIDs: [Track.ID], toPlaylist id: Playlist.ID) async throws
+    func removeTrack(_ trackID: Track.ID, fromPlaylist id: Playlist.ID) async throws
+}
+
+public extension LibraryStore {
+    func favoriteTrackIDs() async throws -> Set<Track.ID> { [] }
+    func observeFavoriteTrackIDs() -> AsyncStream<Set<Track.ID>> {
+        AsyncStream { $0.finish() }
+    }
+    func setFavorite(_ isFavorite: Bool, forTrack id: Track.ID) async throws {}
+    func playlists() async throws -> [Playlist] { [] }
+    func observePlaylists() -> AsyncStream<[Playlist]> {
+        AsyncStream { $0.finish() }
+    }
+    func createPlaylist(name: String) async throws -> Playlist {
+        throw DomainError.library(.unavailable)
+    }
+    func deletePlaylist(id: Playlist.ID) async throws {
+        throw DomainError.playlistNotFound(id)
+    }
+    func renamePlaylist(id: Playlist.ID, to name: String) async throws {
+        throw DomainError.playlistNotFound(id)
+    }
+    func addTracks(_ trackIDs: [Track.ID], toPlaylist id: Playlist.ID) async throws {
+        throw DomainError.playlistNotFound(id)
+    }
+    func removeTrack(_ trackID: Track.ID, fromPlaylist id: Playlist.ID) async throws {
+        throw DomainError.playlistNotFound(id)
+    }
 }
 
 public protocol PlayerEngine: Sendable {
@@ -64,6 +101,7 @@ public protocol PlayerEngine: Sendable {
     var isShuffled: Bool { get async }
     func setRepeatMode(_ mode: RepeatMode) async
     func setShuffled(_ shuffled: Bool) async
+    func applyEqualizer(_ settings: EqualizerSettings) async
 }
 
 public extension PlayerEngine {
@@ -71,4 +109,5 @@ public extension PlayerEngine {
     var isShuffled: Bool { false }
     func setRepeatMode(_ mode: RepeatMode) async {}
     func setShuffled(_ shuffled: Bool) async {}
+    func applyEqualizer(_ settings: EqualizerSettings) async {}
 }

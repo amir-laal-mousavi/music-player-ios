@@ -54,6 +54,10 @@ public enum DomainError: Error, Equatable, Sendable {
     case duplicateTrack(TelegramAudioIdentity)
     case trackNotFound(Track.ID)
     case importJobNotFound(ImportJob.ID)
+    case invalidPlaylist
+    case invalidPlaylistName
+    case invalidPlaylistTracks
+    case playlistNotFound(Playlist.ID)
     case telegram(TelegramGatewayError)
     case library(LibraryStoreError)
     case playback(PlayerError)
