@@ -66,6 +66,11 @@ final class MusicPlayerFlowUITests: XCTestCase {
     }
 
     private func signIn(_ app: XCUIApplication) {
+        // Sign-in lives on the Telegram tab; the library is the default tab.
+        let telegramTab = app.tabBars.buttons["Telegram"]
+        XCTAssertTrue(telegramTab.waitForExistence(timeout: 20))
+        telegramTab.tap()
+
         let phone = app.textFields["login.phone"]
         XCTAssertTrue(phone.waitForExistence(timeout: 20))
         phone.tap()

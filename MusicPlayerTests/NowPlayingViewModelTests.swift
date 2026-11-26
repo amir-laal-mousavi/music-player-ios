@@ -42,6 +42,7 @@ final class NowPlayingViewModelTests: XCTestCase {
         defer { model.stop() }
 
         await model.togglePlayback()
+        await waitUntil { model.state.status == .paused }
 
         XCTAssertEqual(model.state.status, .paused)
         XCTAssertTrue(model.canSeek)
@@ -73,11 +74,29 @@ final class NowPlayingViewModelTests: XCTestCase {
         defer { model.stop() }
 
         await model.next()
+        await waitUntil { model.currentTrack?.title == "Morning Static" }
+
         XCTAssertEqual(model.currentTrack?.title, "Morning Static")
         XCTAssertFalse(model.canGoNext)
         XCTAssertTrue(model.canGoPrevious)
 
         await model.next()
+        try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(model.currentTrack?.title, "Morning Static")
+    }
+
+    /// The view model learns about player changes through its observation stream.
+    private func waitUntil(
+        timeout: TimeInterval = 3,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ condition: () -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Condition was not met within \(timeout)s", file: file, line: line)
     }
 }

@@ -140,9 +140,9 @@ actor StubTelegramGateway: TelegramGateway {
         ]
         for (chatID, titles) in catalog {
             var list: [TelegramAudio] = []
-            var messageID: Int64 = 1000 + Int64(titles.count) + 3
-            for title in titles {
-                messageID -= 1
+            // Newest first, so message 103 is the first row UI tests see.
+            for (index, title) in titles.enumerated() {
+                let messageID = Int64(100 + titles.count - index)
                 guard
                     let identity = try? TelegramAudioIdentity(chatID: chatID, messageID: messageID),
                     let audio = try? TelegramAudio(
