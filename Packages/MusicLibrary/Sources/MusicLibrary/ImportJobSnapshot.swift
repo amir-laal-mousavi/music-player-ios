@@ -221,6 +221,12 @@ private struct ErrorSnapshot: Codable {
         case .importJobNotFound(let id):
             kind = "importJobNotFound"
             self.id = id
+        case .invalidPlaylist: kind = "invalidPlaylist"
+        case .invalidPlaylistName: kind = "invalidPlaylistName"
+        case .invalidPlaylistTracks: kind = "invalidPlaylistTracks"
+        case .playlistNotFound(let id):
+            kind = "playlistNotFound"
+            self.id = id
         case .telegram(let error):
             kind = "telegram"
             nested = telegramValue(error)
@@ -257,6 +263,12 @@ private struct ErrorSnapshot: Codable {
         case "duplicateImportItem":
             return .duplicateImportItem(try identity())
         case "invalidImportJob": return .invalidImportJob
+        case "invalidPlaylist": return .invalidPlaylist
+        case "invalidPlaylistName": return .invalidPlaylistName
+        case "invalidPlaylistTracks": return .invalidPlaylistTracks
+        case "playlistNotFound":
+            guard let id else { throw DomainError.library(.corruptData) }
+            return .playlistNotFound(id)
         case "invalidPlaybackState": return .invalidPlaybackState
         case "invalidPlaybackQueue": return .invalidPlaybackQueue
         case "invalidStateTransition":

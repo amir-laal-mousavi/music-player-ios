@@ -321,15 +321,6 @@ private extension ImportJob {
         guard let current else { return proposed }
         return proposed.completedBytes >= current.completedBytes ? proposed : current
     }
-}
-
-private extension Array where Element: Identifiable {
-    func sortedNewestFirst<T: Comparable>(by date: (Element) -> T) -> [Element] {
-        sorted {
-            if date($0) == date($1) { return String(describing: $0.id) > String(describing: $1.id) }
-            return date($0) > date($1)
-        }
-    }
     // MARK: - Favorites
 
     public func favoriteTrackIDs() async throws -> Set<Track.ID> {
@@ -397,7 +388,7 @@ private extension Array where Element: Identifiable {
 
     private func loadFavorites() throws -> Set<Track.ID> {
         let context = ModelContext(container)
-        let records = try context.fetch(FetchDescriptor<PersistedFavorite>(sortBy: [SortDescriptor(\.createdAt)]))
+        let records = try context.fetch(FetchDescriptor<PersistedFavorite>(sortBy: [SortDescriptor<PersistedFavorite>(\.createdAt)]))
         return Set(records.map(\.trackID))
     }
 
@@ -513,9 +504,19 @@ private extension Array where Element: Identifiable {
     private func loadPlaylists() throws -> [Playlist] {
         let context = ModelContext(container)
         let records = try context.fetch(
-            FetchDescriptor<PersistedPlaylist>(sortBy: [SortDescriptor(\.createdAt)])
+            FetchDescriptor<PersistedPlaylist>(sortBy: [SortDescriptor<PersistedPlaylist>(\.createdAt)])
         )
         return try records.map { try $0.value() }
+    }
+
+}
+
+private extension Array where Element: Identifiable {
+    func sortedNewestFirst<T: Comparable>(by date: (Element) -> T) -> [Element] {
+        sorted {
+            if date($0) == date($1) { return String(describing: $0.id) > String(describing: $1.id) }
+            return date($0) > date($1)
+        }
     }
 
 }
