@@ -239,88 +239,6 @@ public actor SwiftDataLibraryStore: LibraryStore {
     private func identityKey(_ identity: TelegramAudioIdentity) -> String {
         "\(identity.chatID):\(identity.messageID)"
     }
-}
-
-private extension ImportJob {
-    func merging(_ incoming: ImportJob) throws -> ImportJob {
-        guard incoming.id == id, incoming.createdAt == createdAt else {
-            throw DomainError.library(.corruptData)
-        }
-        guard incoming.updatedAt >= updatedAt else { return self }
-        let advances = incoming.updatedAt > updatedAt
-        guard incoming.status == status || (advances && canAdvanceStatus(to: incoming.status)) else {
-            return self
-        }
-
-        let currentItems = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        let mergedItems = try incoming.items.map { proposed -> ImportItem in
-            guard let current = currentItems[proposed.id] else { return proposed }
-            let progress = Self.monotonicProgress(proposed.progress, current.progress)
-            if proposed.status == current.status {
-                switch current.status {
-                case .imported, .duplicate:
-                    return try ImportItem(
-                        audio: proposed.audio,
-                        status: current.status,
-                        progress: progress,
-                        trackID: current.trackID
-                    )
-                case .failed:
-                    guard advances else { return current }
-                    return try ImportItem(
-                        audio: proposed.audio,
-                        status: .failed,
-                        progress: progress,
-                        error: proposed.error
-                    )
-                default:
-                    return try ImportItem(
-                        audio: proposed.audio,
-                        status: current.status,
-                        progress: progress
-                    )
-                }
-            }
-            guard advances, current.canTransition(to: proposed.status) else { return current }
-            return try ImportItem(
-                audio: proposed.audio,
-                status: proposed.status,
-                progress: progress,
-                trackID: proposed.trackID,
-                error: proposed.error
-            )
-        }
-        guard incoming.status != status || mergedItems != items else { return self }
-        let merged = try ImportJob(
-            id: id,
-            sourceChat: incoming.sourceChat,
-            items: mergedItems,
-            status: incoming.status,
-            createdAt: createdAt,
-            updatedAt: incoming.updatedAt
-        )
-        return merged == self ? self : merged
-    }
-
-    private func canAdvanceStatus(to target: ImportJobStatus) -> Bool {
-        if canTransition(to: target) { return true }
-        // Recovery and resume may normalize through queued before saving one snapshot.
-        switch (status, target) {
-        case (.active, .queued), (.waitingToResume, .active), (.waitingToResume, .cancelled):
-            return true
-        default:
-            return false
-        }
-    }
-
-    private static func monotonicProgress(
-        _ proposed: DownloadProgress?,
-        _ current: DownloadProgress?
-    ) -> DownloadProgress? {
-        guard let proposed else { return current }
-        guard let current else { return proposed }
-        return proposed.completedBytes >= current.completedBytes ? proposed : current
-    }
     // MARK: - Favorites
 
     public func favoriteTrackIDs() async throws -> Set<Track.ID> {
@@ -509,6 +427,88 @@ private extension ImportJob {
         return try records.map { try $0.value() }
     }
 
+}
+
+private extension ImportJob {
+    func merging(_ incoming: ImportJob) throws -> ImportJob {
+        guard incoming.id == id, incoming.createdAt == createdAt else {
+            throw DomainError.library(.corruptData)
+        }
+        guard incoming.updatedAt >= updatedAt else { return self }
+        let advances = incoming.updatedAt > updatedAt
+        guard incoming.status == status || (advances && canAdvanceStatus(to: incoming.status)) else {
+            return self
+        }
+
+        let currentItems = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        let mergedItems = try incoming.items.map { proposed -> ImportItem in
+            guard let current = currentItems[proposed.id] else { return proposed }
+            let progress = Self.monotonicProgress(proposed.progress, current.progress)
+            if proposed.status == current.status {
+                switch current.status {
+                case .imported, .duplicate:
+                    return try ImportItem(
+                        audio: proposed.audio,
+                        status: current.status,
+                        progress: progress,
+                        trackID: current.trackID
+                    )
+                case .failed:
+                    guard advances else { return current }
+                    return try ImportItem(
+                        audio: proposed.audio,
+                        status: .failed,
+                        progress: progress,
+                        error: proposed.error
+                    )
+                default:
+                    return try ImportItem(
+                        audio: proposed.audio,
+                        status: current.status,
+                        progress: progress
+                    )
+                }
+            }
+            guard advances, current.canTransition(to: proposed.status) else { return current }
+            return try ImportItem(
+                audio: proposed.audio,
+                status: proposed.status,
+                progress: progress,
+                trackID: proposed.trackID,
+                error: proposed.error
+            )
+        }
+        guard incoming.status != status || mergedItems != items else { return self }
+        let merged = try ImportJob(
+            id: id,
+            sourceChat: incoming.sourceChat,
+            items: mergedItems,
+            status: incoming.status,
+            createdAt: createdAt,
+            updatedAt: incoming.updatedAt
+        )
+        return merged == self ? self : merged
+    }
+
+    private func canAdvanceStatus(to target: ImportJobStatus) -> Bool {
+        if canTransition(to: target) { return true }
+        // Recovery and resume may normalize through queued before saving one snapshot.
+        switch (status, target) {
+        case (.active, .queued), (.waitingToResume, .active), (.waitingToResume, .cancelled):
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func monotonicProgress(
+        _ proposed: DownloadProgress?,
+        _ current: DownloadProgress?
+    ) -> DownloadProgress? {
+        guard let proposed else { return current }
+        guard let current else { return proposed }
+        return proposed.completedBytes >= current.completedBytes ? proposed : current
+    }
 }
 
 private extension Array where Element: Identifiable {
