@@ -285,6 +285,11 @@ final class ImportCoordinatorTests: XCTestCase {
 
         let queued = try await coordinator.enqueue([audio], from: TestSupport.chat)
         await assertEqual(await starts.next(), audio.identity)
+        // The fake reports its first progress from inside the download, so let it be stored first.
+        for _ in 0..<500 {
+            if try await store.importJob(id: queued.id).items.first?.progress?.completedBytes == 2 { break }
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
         let cancelled = try await coordinator.cancel(jobID: queued.id)
         await assertEqual(cancelled.status, .cancelled)
         var observations = store.observeImportJobs().makeAsyncIterator()
