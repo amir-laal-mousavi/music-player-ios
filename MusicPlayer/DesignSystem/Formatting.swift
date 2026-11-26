@@ -1,5 +1,6 @@
 import Foundation
 import MusicCore
+import MusicLibrary
 
 enum Format {
     static func duration(_ value: TimeInterval) -> String {
@@ -124,5 +125,8 @@ extension TelegramGatewayError {
 func userMessage(for error: Error) -> String {
     if let domain = error as? DomainError { return domain.userMessage }
     if let telegram = error as? TelegramGatewayError { return telegram.userMessage }
+    if let local = error as? LocalFileImportError {
+        return local.errorDescription ?? error.localizedDescription
+    }
     return error.localizedDescription
 }

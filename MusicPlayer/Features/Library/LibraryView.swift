@@ -1,9 +1,11 @@
 import MusicCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LibraryView: View {
     let environment: AppEnvironment
     @Bindable var model: LibraryViewModel
+    @Bindable var importModel: FileImportViewModel
 
     @State private var nowPlaying: NowPlayingViewModel?
     @State private var pendingDeletion: Track?
@@ -24,9 +26,38 @@ struct LibraryView: View {
         .navigationTitle("Library")
         .searchable(text: $model.query, prompt: "Search songs")
         .musicBarBackground()
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    importModel.isShowingPicker = true
+                } label: {
+                    Label("Import files", systemImage: "square.and.arrow.down")
+                }
+                .accessibilityIdentifier("library.importFiles")
+                .disabled(importModel.isImporting)
+            }
+        }
+        .fileImporter(
+            isPresented: $importModel.isShowingPicker,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                importModel.importFiles(urls)
+            case .failure(let error):
+                importModel.reportPickerFailure(error)
+            }
+        }
         .task { await model.start() }
         .overlay(alignment: .bottom) {
             if let errorMessage = model.errorMessage {
+                StatusBanner(kind: .error, message: errorMessage)
+                    .padding()
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let errorMessage = importModel.errorMessage {
                 StatusBanner(kind: .error, message: errorMessage)
                     .padding()
             }
@@ -80,10 +111,21 @@ struct LibraryView: View {
     }
 
     private var emptyLibrary: some View {
-        ContentUnavailableView {
-            Label("Your library is empty", systemImage: "music.note")
-        } description: {
-            Text("Sign in to Telegram, pick a chat, and select the songs you want. They stay on this device and play offline.")
+        VStack(spacing: 18) {
+            ContentUnavailableView {
+                Label("Your library is empty", systemImage: "music.note")
+            } description: {
+                Text("Import audio files from the Files app, or sign in to Telegram and pick songs from a chat. Everything stays on this device and plays offline.")
+            }
+
+            Button {
+                importModel.isShowingPicker = true
+            } label: {
+                Label("Import files", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(PrimaryActionButtonStyle())
+            .accessibilityIdentifier("library.importFiles.empty")
+            .padding(.horizontal, 40)
         }
     }
 

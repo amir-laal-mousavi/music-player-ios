@@ -288,6 +288,9 @@ public actor LibraryFileStore {
         case "audio/ogg", "application/ogg": return "ogg"
         case "audio/wav", "audio/x-wav": return "wav"
         case "audio/flac", "audio/x-flac": return "flac"
+        case "audio/aiff", "audio/x-aiff": return "aiff"
+        case "audio/x-caf": return "caf"
+        case "audio/opus": return "opus"
         default: return "audio"
         }
     }
@@ -301,6 +304,6 @@ public actor LibraryFileStore {
     private func isFinalName(_ name: String) -> Bool {
         let parts = name.split(separator: ".", maxSplits: 1)
         guard parts.count == 2, UUID(uuidString: String(parts[0])) != nil else { return false }
-        return ["mp3", "m4a", "aac", "ogg", "wav", "flac", "audio"].contains(String(parts[1]))
+        return ["mp3", "m4a", "aac", "ogg", "wav", "flac", "aiff", "caf", "opus", "audio"].contains(String(parts[1]))
     }
 }

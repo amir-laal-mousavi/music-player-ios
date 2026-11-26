@@ -44,6 +44,8 @@ struct TelegramSetupView: View {
                     Text("1. Create an application at my.telegram.org/apps.")
                     Text("2. Copy Config/Secrets.example.xcconfig to Config/Secrets.xcconfig.")
                     Text("3. Fill in TELEGRAM_API_ID and TELEGRAM_API_HASH, then build again.")
+                    Text("Until then you can import audio files from the Library tab.")
+                        .foregroundStyle(.secondary)
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
