@@ -197,6 +197,8 @@ public struct Track: Identifiable, Sendable, Equatable {
     public let fileSize: Int64?
     public let importedAt: Date
     public let localURL: URL
+    /// Cover art copied next to the audio file, or nil when the source had none.
+    public let artworkURL: URL?
 
     public init(
         id: ID = UUID(),
@@ -207,13 +209,15 @@ public struct Track: Identifiable, Sendable, Equatable {
         duration: TimeInterval,
         fileSize: Int64? = nil,
         importedAt: Date = Date(),
-        localURL: URL
+        localURL: URL,
+        artworkURL: URL? = nil
     ) throws {
         guard sourceChat.id == telegramIdentity.chatID else { throw DomainError.invalidTrack }
         guard duration.isFinite, duration >= 0 else { throw DomainError.invalidDuration }
         if let fileSize, fileSize < 0 { throw DomainError.invalidFileSize }
         guard importedAt.timeIntervalSince1970.isFinite else { throw DomainError.invalidTrack }
         guard localURL.isFileURL else { throw DomainError.invalidTrack }
+        if let artworkURL, !artworkURL.isFileURL { throw DomainError.invalidTrack }
         self.id = id
         self.telegramIdentity = telegramIdentity
         self.sourceChat = sourceChat
@@ -223,5 +227,6 @@ public struct Track: Identifiable, Sendable, Equatable {
         self.fileSize = fileSize
         self.importedAt = importedAt
         self.localURL = localURL
+        self.artworkURL = artworkURL
     }
 }

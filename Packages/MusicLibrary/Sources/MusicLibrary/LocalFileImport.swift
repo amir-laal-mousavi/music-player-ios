@@ -11,19 +11,23 @@ public struct AudioFileMetadata: Sendable, Equatable {
     public let duration: TimeInterval
     public let fileSize: Int64?
     public let mimeType: String?
+    /// Embedded cover art, when the file carries one.
+    public let artworkData: Data?
 
     public init(
         title: String,
         artist: String,
         duration: TimeInterval,
         fileSize: Int64?,
-        mimeType: String?
+        mimeType: String?,
+        artworkData: Data? = nil
     ) {
         self.title = title
         self.artist = artist
         self.duration = duration
         self.fileSize = fileSize
         self.mimeType = mimeType
+        self.artworkData = artworkData
     }
 }
 
@@ -71,6 +75,7 @@ public struct AVFoundationAudioMetadataReader: AudioFileMetadataReading {
 
         var title = ""
         var artist = ""
+        var artworkData: Data?
         if let items = try? await asset.load(.commonMetadata) {
             for item in items {
                 guard let key = item.commonKey else { continue }
@@ -82,6 +87,10 @@ public struct AVFoundationAudioMetadataReader: AudioFileMetadataReading {
                 case .commonKeyArtist:
                     if let value = try? await item.load(.stringValue) {
                         artist = value
+                    }
+                case .commonKeyArtwork:
+                    if let value = try? await item.load(.dataValue) {
+                        artworkData = value
                     }
                 default:
                     continue
@@ -96,7 +105,8 @@ public struct AVFoundationAudioMetadataReader: AudioFileMetadataReading {
             artist: artist.trimmingCharacters(in: .whitespacesAndNewlines),
             duration: seconds,
             fileSize: fileSize,
-            mimeType: Self.mimeType(for: url)
+            mimeType: Self.mimeType(for: url),
+            artworkData: artworkData
         )
     }
 
@@ -224,17 +234,20 @@ public actor LocalFileImporter {
     private let store: any LibraryStore
     private let fileStore: LibraryFileStore
     private let metadataReader: any AudioFileMetadataReading
+    private let artworkStore: ArtworkStore?
     private let now: @Sendable () -> Date
 
     public init(
         store: any LibraryStore,
         fileStore: LibraryFileStore,
         metadataReader: any AudioFileMetadataReading = AVFoundationAudioMetadataReader(),
+        artworkStore: ArtworkStore? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.store = store
         self.fileStore = fileStore
         self.metadataReader = metadataReader
+        self.artworkStore = artworkStore
         self.now = now
     }
 
@@ -312,6 +325,10 @@ public actor LocalFileImporter {
         )
 
         let localURL = try await fileStore.importDownloadedFile(for: audio, at: url)
+        var artworkURL: URL?
+        if let artworkData = metadata.artworkData, let artworkStore {
+            artworkURL = try? await artworkStore.store(data: artworkData)
+        }
         do {
             let track = try Track(
                 telegramIdentity: identity,
@@ -321,7 +338,8 @@ public actor LocalFileImporter {
                 duration: audio.duration,
                 fileSize: audio.fileSize,
                 importedAt: now(),
-                localURL: localURL
+                localURL: localURL,
+                artworkURL: artworkURL
             )
             try await store.insertTrack(track)
             return LocalFileImportResult(

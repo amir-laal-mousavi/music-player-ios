@@ -26,7 +26,8 @@ struct RootView: View {
             initialValue: FileImportViewModel(
                 importer: LocalFileImporter(
                     store: environment.store,
-                    fileStore: environment.fileStore
+                    fileStore: environment.fileStore,
+                    artworkStore: environment.artworkStore
                 )
             )
         )

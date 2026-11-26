@@ -1,5 +1,21 @@
 import Foundation
 
+/// Repeat behaviour for the active queue.
+public enum RepeatMode: String, Sendable, Equatable, CaseIterable {
+    case off
+    case all
+    case one
+
+    /// Cycles off → all → one → off, matching the system player.
+    public var next: RepeatMode {
+        switch self {
+        case .off: return .all
+        case .all: return .one
+        case .one: return .off
+        }
+    }
+}
+
 public enum PlaybackInterruptionReason: String, Sendable, Equatable {
     case audioSession
     case routeChange
@@ -111,6 +127,21 @@ public struct PlaybackQueue: Sendable, Equatable {
     public func next() throws -> PlaybackQueue {
         guard hasNext else { throw DomainError.playback(.queueBoundary) }
         return PlaybackQueue(uncheckedTracks: tracks, currentIndex: currentIndex + 1)
+    }
+
+    /// Restarts the queue at its first track without changing its order.
+    public func wrappingToStart() -> PlaybackQueue {
+        PlaybackQueue(uncheckedTracks: tracks, currentIndex: 0)
+    }
+
+    /// Moves to the last track without changing the queue order.
+    public func wrappingToEnd() -> PlaybackQueue {
+        PlaybackQueue(uncheckedTracks: tracks, currentIndex: tracks.count - 1)
+    }
+
+    /// Reloads the current track from the beginning.
+    public func restartingCurrent() -> PlaybackQueue {
+        PlaybackQueue(uncheckedTracks: tracks, currentIndex: currentIndex)
     }
 
     private init(uncheckedTracks: [Track], currentIndex: Int) {

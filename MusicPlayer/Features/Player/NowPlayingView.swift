@@ -1,26 +1,33 @@
+import MusicCore
 import SwiftUI
+import UIKit
 
 struct NowPlayingView: View {
     @Bindable var model: NowPlayingViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var artworkImage: UIImage?
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 18) {
-                Spacer(minLength: 8)
-                artwork
-                titleBlock
-                progressBlock
-                transport
-                if let errorMessage = model.errorMessage {
-                    StatusBanner(kind: .error, message: errorMessage)
+            ZStack {
+                animatedBackground
+
+                VStack(spacing: 16) {
+                    Spacer(minLength: 4)
+                    artwork
+                    titleBlock
+                    progressBlock
+                    transport
+                    if let errorMessage = model.errorMessage {
+                        StatusBanner(kind: .error, message: errorMessage)
+                    }
+                    Spacer(minLength: 4)
                 }
-                Spacer(minLength: 8)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 20)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.background)
             .navigationTitle("Now Playing")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -34,21 +41,54 @@ struct NowPlayingView: View {
                 }
             }
             .task { await model.start() }
+            .task(id: model.currentTrack?.artworkURL) {
+                artworkImage = await ArtworkImageCache.shared.image(for: model.currentTrack?.artworkURL)
+            }
             .onDisappear { model.stop() }
         }
+        .preferredColorScheme(.dark)
+    }
+
+    /// Slowly drifting colour field sampled from the cover art, Apple Music style.
+    private var animatedBackground: some View {
+        let palette = ArtworkPalette.colors(for: artworkImage, fallbackTitle: titleText)
+        return TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            ZStack {
+                LinearGradient(
+                    colors: [palette[0], palette[1], palette[2]],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                Circle()
+                    .fill(palette[0])
+                    .frame(width: 360, height: 360)
+                    .blur(radius: 90)
+                    .offset(x: CGFloat(cos(time * 0.17)) * 90, y: CGFloat(sin(time * 0.23)) * 110)
+
+                Circle()
+                    .fill(palette[1])
+                    .frame(width: 320, height: 320)
+                    .blur(radius: 100)
+                    .offset(x: CGFloat(sin(time * 0.13)) * -110, y: CGFloat(cos(time * 0.19)) * 90)
+
+                Color.black.opacity(0.22)
+            }
+            .ignoresSafeArea()
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 
     private var artwork: some View {
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
-            .fill(Theme.artworkGradient(for: titleText))
-            .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: 300)
-            .overlay {
-                Image(systemName: "music.note")
-                    .font(.system(size: 64, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-            }
-            .accessibilityHidden(true)
+        ArtworkImage(
+            url: model.currentTrack?.artworkURL,
+            title: titleText,
+            size: 300,
+            cornerRadius: 28
+        )
+        .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
     }
 
     private var titleBlock: some View {
@@ -60,12 +100,12 @@ struct NowPlayingView: View {
                 .accessibilityIdentifier("player.title")
             Text(artistText)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(1)
             if let queueLabel = model.queueLabel {
                 Text(queueLabel)
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.white.opacity(0.55))
             }
         }
     }
@@ -82,7 +122,7 @@ struct NowPlayingView: View {
                     }
                 }
             )
-            .tint(Theme.accent)
+            .tint(.white)
             .disabled(!model.canSeek)
             .accessibilityLabel("Playback position")
             .accessibilityIdentifier("player.scrubber")
@@ -93,19 +133,30 @@ struct NowPlayingView: View {
                 Text(Format.duration(model.duration))
             }
             .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.white.opacity(0.6))
             .accessibilityHidden(true)
         }
     }
 
     private var transport: some View {
-        HStack(spacing: 28) {
+        HStack(spacing: 14) {
+            Button {
+                Task { await model.toggleShuffle() }
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .foregroundStyle(model.isShuffled ? Theme.accent : Color.white.opacity(0.65))
+            }
+            .accessibilityLabel(model.isShuffled ? "Shuffle on" : "Shuffle off")
+            .accessibilityIdentifier("player.shuffle")
+
             Button {
                 Task { await model.previous() }
             } label: {
                 Image(systemName: "backward.fill")
                     .font(.title2)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 48, height: 48)
             }
             .disabled(!model.canGoPrevious)
             .accessibilityLabel("Previous track")
@@ -117,7 +168,7 @@ struct NowPlayingView: View {
                 Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 74, height: 74)
+                    .frame(width: 68, height: 68)
                     .background(Theme.accent, in: Circle())
             }
             .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
@@ -128,13 +179,33 @@ struct NowPlayingView: View {
             } label: {
                 Image(systemName: "forward.fill")
                     .font(.title2)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 48, height: 48)
             }
             .disabled(!model.canGoNext)
             .accessibilityLabel("Next track")
             .accessibilityIdentifier("player.next")
+
+            Button {
+                Task { await model.cycleRepeatMode() }
+            } label: {
+                Image(systemName: model.repeatMode == .one ? "repeat.1" : "repeat")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .foregroundStyle(model.repeatMode == .off ? Color.white.opacity(0.65) : Theme.accent)
+            }
+            .accessibilityLabel(repeatLabel)
+            .accessibilityIdentifier("player.repeat")
         }
         .buttonStyle(.plain)
+        .foregroundStyle(.white)
+    }
+
+    private var repeatLabel: String {
+        switch model.repeatMode {
+        case .off: return "Repeat off"
+        case .all: return "Repeat all"
+        case .one: return "Repeat one"
+        }
     }
 
     private var titleText: String {

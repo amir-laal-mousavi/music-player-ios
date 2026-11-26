@@ -29,6 +29,9 @@ struct PlaybackBackingEvent: Sendable {
 public actor AVFoundationPlayerEngine: PlayerEngine {
     public private(set) var state: PlaybackState = .idle
     public private(set) var queue: PlaybackQueue?
+    public private(set) var repeatMode: RepeatMode = .off
+    public private(set) var isShuffled = false
+    private var shuffleBackup: [Track]?
 
     private let backing: any PlaybackBacking
     private var stateObservers: [UUID: AsyncStream<PlaybackState>.Continuation] = [:]
@@ -108,17 +111,35 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
     }
 
     public func play(_ tracks: [Track], startingAt index: Int) async throws {
-        try await load(queue: PlaybackQueue(tracks: tracks, currentIndex: index))
+        let queue: PlaybackQueue
+        if isShuffled {
+            queue = try Self.shuffledQueue(tracks: tracks, startingAt: index)
+        } else {
+            queue = try PlaybackQueue(tracks: tracks, currentIndex: index)
+        }
+        try await load(queue: queue)
     }
 
     public func previous() async throws {
         guard let queue else { throw DomainError.playback(.notReady) }
-        try await load(queue: queue.previous())
+        if queue.hasPrevious {
+            try await load(queue: queue.previous())
+        } else if repeatMode == .all {
+            try await load(queue: queue.wrappingToEnd())
+        } else {
+            throw DomainError.playback(.queueBoundary)
+        }
     }
 
     public func next() async throws {
         guard let queue else { throw DomainError.playback(.notReady) }
-        try await load(queue: queue.next())
+        if queue.hasNext {
+            try await load(queue: queue.next())
+        } else if repeatMode == .all {
+            try await load(queue: queue.wrappingToStart())
+        } else {
+            throw DomainError.playback(.queueBoundary)
+        }
     }
 
     public func pause() async throws {
@@ -319,17 +340,71 @@ public actor AVFoundationPlayerEngine: PlayerEngine {
                 duration: nextDuration
             ))
         case .completed:
-            guard queue != nil, state.status == .playing else { return }
+            guard let queue, state.status == .playing else { return }
             pendingAutoplay = false
-            publish(try PlaybackState(
-                status: .completed,
-                currentTrackID: state.currentTrackID,
-                position: state.duration,
-                duration: state.duration
-            ))
+            await advanceAfterCompletion(queue: queue)
         case let .failed(error):
             try fail(.playback(error))
         }
+    }
+
+    public func setRepeatMode(_ mode: RepeatMode) async {
+        repeatMode = mode
+    }
+
+    public func setShuffled(_ shuffled: Bool) async {
+        guard isShuffled != shuffled, let queue else {
+            isShuffled = shuffled
+            return
+        }
+        isShuffled = shuffled
+        if shuffled {
+            shuffleBackup = queue.tracks
+            if let reordered = try? Self.shuffledQueue(tracks: queue.tracks, startingAt: queue.currentIndex) {
+                self.queue = reordered
+            }
+        } else if let backup = shuffleBackup {
+            let currentID = queue.currentTrack.id
+            let index = backup.firstIndex(where: { $0.id == currentID }) ?? 0
+            if let restored = try? PlaybackQueue(tracks: backup, currentIndex: index) {
+                self.queue = restored
+            }
+        }
+        if !shuffled { shuffleBackup = nil }
+    }
+
+    /// Natural track completion follows the repeat mode instead of stopping.
+    private func advanceAfterCompletion(queue: PlaybackQueue) async {
+        do {
+            switch repeatMode {
+            case .one:
+                try await load(queue: queue.restartingCurrent())
+            case .all:
+                try await load(queue: queue.hasNext ? queue.next() : queue.wrappingToStart())
+            case .off:
+                guard queue.hasNext else {
+                    publish(try PlaybackState(
+                        status: .completed,
+                        currentTrackID: state.currentTrackID,
+                        position: state.duration,
+                        duration: state.duration
+                    ))
+                    return
+                }
+                try await load(queue: queue.next())
+            }
+        } catch {
+            try? fail(.playback(.playbackFailed))
+        }
+    }
+
+    private static func shuffledQueue(tracks: [Track], startingAt index: Int) throws -> PlaybackQueue {
+        guard tracks.indices.contains(index) else { throw DomainError.playback(.notReady) }
+        let current = tracks[index]
+        var rest = tracks
+        rest.remove(at: index)
+        rest.shuffle()
+        return try PlaybackQueue(tracks: [current] + rest, currentIndex: 0)
     }
 
     private func startPlayback() async throws {

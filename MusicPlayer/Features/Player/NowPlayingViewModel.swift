@@ -16,6 +16,8 @@ final class NowPlayingViewModel {
     var isScrubbing = false
     var errorMessage: String?
     var hasStarted = false
+    var repeatMode: RepeatMode = .off
+    var isShuffled = false
 
     init(player: any PlayerEngine, tracks: [Track], startingIndex: Int) {
         self.player = player
@@ -70,13 +72,11 @@ final class NowPlayingViewModel {
     }
 
     var canGoNext: Bool {
-        guard let index = currentIndex else { return false }
-        return index + 1 < tracks.count
+        tracks.count > 1 || repeatMode == .all
     }
 
     var canGoPrevious: Bool {
-        guard let index = currentIndex else { return false }
-        return index > 0
+        tracks.count > 1 || repeatMode == .all
     }
 
     var queueLabel: String? {
@@ -100,6 +100,8 @@ final class NowPlayingViewModel {
         }
         await loadIfNeeded()
         apply(await player.state)
+        repeatMode = await player.repeatMode
+        isShuffled = await player.isShuffled
     }
 
     func stop() {
@@ -128,6 +130,9 @@ final class NowPlayingViewModel {
         errorMessage = nil
         do {
             try await player.next()
+        } catch let error as DomainError {
+            if case .playback(.queueBoundary) = error { return }
+            errorMessage = userMessage(for: error)
         } catch {
             errorMessage = userMessage(for: error)
         }
@@ -138,9 +143,25 @@ final class NowPlayingViewModel {
         errorMessage = nil
         do {
             try await player.previous()
+        } catch let error as DomainError {
+            if case .playback(.queueBoundary) = error { return }
+            errorMessage = userMessage(for: error)
         } catch {
             errorMessage = userMessage(for: error)
         }
+    }
+
+    /// off → all → one → off, like the system player.
+    func cycleRepeatMode() async {
+        let next = repeatMode.next
+        await player.setRepeatMode(next)
+        repeatMode = next
+    }
+
+    func toggleShuffle() async {
+        let next = !isShuffled
+        await player.setShuffled(next)
+        isShuffled = next
     }
 
     func commitSeek() async {

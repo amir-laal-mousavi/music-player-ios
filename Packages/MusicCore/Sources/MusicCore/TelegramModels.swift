@@ -128,6 +128,16 @@ public struct TelegramAudioIdentity: Hashable, Sendable {
     }
 }
 
+/// An album cover or embedded picture Telegram stores next to an audio file.
+public struct TelegramThumbnail: Hashable, Sendable {
+    public let fileID: Int32
+
+    public init(fileID: Int32) throws {
+        guard fileID > 0 else { throw DomainError.invalidFileIdentifier }
+        self.fileID = fileID
+    }
+}
+
 public struct TelegramAudio: Identifiable, Sendable, Equatable {
     public typealias MessageID = Int64
     public typealias ID = TelegramAudioIdentity
@@ -140,6 +150,7 @@ public struct TelegramAudio: Identifiable, Sendable, Equatable {
     public let duration: TimeInterval
     public let fileSize: Int64?
     public let mimeType: String?
+    public let thumbnail: TelegramThumbnail?
 
     public var id: ID { identity }
     public var messageID: MessageID { identity.messageID }
@@ -153,7 +164,8 @@ public struct TelegramAudio: Identifiable, Sendable, Equatable {
         performer: String = "",
         duration: TimeInterval,
         fileSize: Int64? = nil,
-        mimeType: String? = nil
+        mimeType: String? = nil,
+        thumbnail: TelegramThumbnail? = nil
     ) throws {
         guard fileID > 0 else { throw DomainError.invalidFileIdentifier }
         guard !fileReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -172,6 +184,7 @@ public struct TelegramAudio: Identifiable, Sendable, Equatable {
         self.duration = duration
         self.fileSize = fileSize
         self.mimeType = mimeType
+        self.thumbnail = thumbnail
     }
 }
 

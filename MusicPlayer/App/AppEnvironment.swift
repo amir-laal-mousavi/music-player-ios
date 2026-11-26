@@ -11,6 +11,7 @@ final class AppEnvironment {
     let gateway: any TelegramGateway
     let store: any LibraryStore
     let fileStore: LibraryFileStore
+    let artworkStore: ArtworkStore
     let coordinator: ImportCoordinator
     let player: any PlayerEngine
     let isUITesting: Bool
@@ -20,6 +21,7 @@ final class AppEnvironment {
         gateway: any TelegramGateway,
         store: any LibraryStore,
         fileStore: LibraryFileStore,
+        artworkStore: ArtworkStore,
         player: any PlayerEngine,
         isUITesting: Bool
     ) {
@@ -27,9 +29,15 @@ final class AppEnvironment {
         self.gateway = gateway
         self.store = store
         self.fileStore = fileStore
+        self.artworkStore = artworkStore
         self.player = player
         self.isUITesting = isUITesting
-        self.coordinator = ImportCoordinator(gateway: gateway, store: store, fileStore: fileStore)
+        self.coordinator = ImportCoordinator(
+            gateway: gateway,
+            store: store,
+            fileStore: fileStore,
+            artworkStore: artworkStore
+        )
     }
 
     var isTelegramConfigured: Bool { configuration != nil }
@@ -61,6 +69,7 @@ final class AppEnvironment {
         let container = try SwiftDataLibraryStore.makeContainer()
         let store = SwiftDataLibraryStore(container: container)
         let fileStore = try LibraryFileStore()
+        let artworkStore = try ArtworkStore()
         let player = try AVFoundationPlayerEngine()
 
         let configuration: AppConfiguration?
@@ -83,6 +92,7 @@ final class AppEnvironment {
             gateway: gateway,
             store: store,
             fileStore: fileStore,
+            artworkStore: artworkStore,
             player: player,
             isUITesting: false
         )
@@ -100,6 +110,9 @@ final class AppEnvironment {
             gateway: StubTelegramGateway(),
             store: SwiftDataLibraryStore(container: container),
             fileStore: fileStore,
+            artworkStore: try ArtworkStore(
+                directory: directory.appendingPathComponent("Artwork", isDirectory: true)
+            ),
             player: try AVFoundationPlayerEngine(),
             isUITesting: true
         )

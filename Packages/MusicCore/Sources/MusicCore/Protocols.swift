@@ -17,6 +17,12 @@ public protocol TelegramGateway: Sendable {
         progress: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> URL
     func cancelDownload(for identity: TelegramAudioIdentity) async
+    /// Best-effort album cover download; returns nil when the source has none.
+    func downloadThumbnail(_ thumbnail: TelegramThumbnail) async throws -> URL?
+}
+
+public extension TelegramGateway {
+    func downloadThumbnail(_ thumbnail: TelegramThumbnail) async throws -> URL? { nil }
 }
 
 public protocol LibraryStore: Sendable {
@@ -54,4 +60,15 @@ public protocol PlayerEngine: Sendable {
     func resume() async throws
     func stop() async throws
     func seek(to position: TimeInterval) async throws
+    var repeatMode: RepeatMode { get async }
+    var isShuffled: Bool { get async }
+    func setRepeatMode(_ mode: RepeatMode) async
+    func setShuffled(_ shuffled: Bool) async
+}
+
+public extension PlayerEngine {
+    var repeatMode: RepeatMode { .off }
+    var isShuffled: Bool { false }
+    func setRepeatMode(_ mode: RepeatMode) async {}
+    func setShuffled(_ shuffled: Bool) async {}
 }

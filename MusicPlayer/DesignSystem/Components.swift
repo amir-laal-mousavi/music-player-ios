@@ -90,18 +90,11 @@ struct OfflineBanner: View {
 
 struct ArtworkView: View {
     let title: String
+    var artworkURL: URL?
     var size: CGFloat = 48
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-            .fill(Theme.artworkGradient(for: title))
-            .frame(width: size, height: size)
-            .overlay {
-                Image(systemName: "music.note")
-                    .font(.system(size: size * 0.36, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-            }
-            .accessibilityHidden(true)
+        ArtworkImage(url: artworkURL, title: title, size: size)
     }
 }
 
@@ -119,7 +112,7 @@ struct TrackRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ArtworkView(title: titleText)
+            ArtworkView(title: titleText, artworkURL: track.artworkURL)
             VStack(alignment: .leading, spacing: 3) {
                 Text(titleText)
                     .font(.body.weight(.semibold))

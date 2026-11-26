@@ -5,6 +5,7 @@ public actor ImportCoordinator {
     private let gateway: any TelegramGateway
     private let store: any LibraryStore
     private let fileStore: LibraryFileStore
+    private let artworkStore: ArtworkStore?
     private let now: @Sendable () -> Date
     private var tasks: [ImportJob.ID: Task<Void, Never>] = [:]
     private var taskTokens: [ImportJob.ID: UUID] = [:]
@@ -25,11 +26,13 @@ public actor ImportCoordinator {
         gateway: any TelegramGateway,
         store: any LibraryStore,
         fileStore: LibraryFileStore,
+        artworkStore: ArtworkStore? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.gateway = gateway
         self.store = store
         self.fileStore = fileStore
+        self.artworkStore = artworkStore
         self.now = now
     }
 
@@ -144,6 +147,9 @@ public actor ImportCoordinator {
         let jobs = try await store.importJobs()
         let tracks = try await store.tracks()
         try await fileStore.cleanupOrphanedFiles(referencedBy: Set(tracks.map(\.localURL)))
+        if let artworkStore {
+            await artworkStore.cleanupOrphans(referencedBy: Set(tracks.compactMap(\.artworkURL)))
+        }
         pendingJobIDs.removeAll()
         for job in jobs.reversed() {
             switch job.status {
@@ -190,6 +196,9 @@ public actor ImportCoordinator {
         let track = try await store.track(id: id)
         try await store.deleteTrack(id: id)
         try await fileStore.deleteFile(at: track.localURL)
+        if let artworkURL = track.artworkURL, let artworkStore {
+            await artworkStore.delete(at: artworkURL)
+        }
     }
 
     private func start(_ jobID: ImportJob.ID) {
@@ -444,6 +453,7 @@ public actor ImportCoordinator {
             at: downloadedURL,
             removingSourceOnSuccess: true
         )
+        let artworkURL = await thumbnailURL(for: item.audio)
         var insertedTrackID: Track.ID?
         do {
             try Task.checkCancellation()
@@ -460,7 +470,8 @@ public actor ImportCoordinator {
                 duration: item.audio.duration,
                 fileSize: item.audio.fileSize,
                 importedAt: now(),
-                localURL: localURL
+                localURL: localURL,
+                artworkURL: artworkURL
             )
             do {
                 try await store.insertTrack(track)
@@ -498,6 +509,13 @@ public actor ImportCoordinator {
             try? await fileStore.deleteFile(at: localURL)
             throw error
         }
+    }
+
+    /// Album cover download is best effort; a failure must not fail the track import.
+    private func thumbnailURL(for audio: TelegramAudio) async -> URL? {
+        guard let thumbnail = audio.thumbnail, let artworkStore else { return nil }
+        guard let source = try? await gateway.downloadThumbnail(thumbnail) else { return nil }
+        return try? await artworkStore.importFile(at: source)
     }
 
     private func recordProgress(

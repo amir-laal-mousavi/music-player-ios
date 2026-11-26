@@ -17,6 +17,7 @@ final class PersistedTrack {
     var fileSize: Int64?
     var importedAt: Date
     var localURLString: String
+    var artworkURLString: String?
 
     init(track: Track) {
         id = track.id
@@ -32,6 +33,7 @@ final class PersistedTrack {
         fileSize = track.fileSize
         importedAt = track.importedAt
         localURLString = track.localURL.absoluteString
+        artworkURLString = track.artworkURL?.absoluteString
     }
 
     func value() throws -> Track {
@@ -41,6 +43,8 @@ final class PersistedTrack {
                   identityKey == "\(telegramChatID):\(telegramMessageID)" else {
                 throw DomainError.library(.corruptData)
             }
+            let artworkURL = artworkURLString.flatMap(URL.init(string:))
+            if let artworkURL, !artworkURL.isFileURL { throw DomainError.library(.corruptData) }
             return try Track(
                 id: id,
                 telegramIdentity: TelegramAudioIdentity(chatID: telegramChatID, messageID: telegramMessageID),
@@ -54,7 +58,8 @@ final class PersistedTrack {
                 duration: duration,
                 fileSize: fileSize,
                 importedAt: importedAt,
-                localURL: localURL
+                localURL: localURL,
+                artworkURL: artworkURL
             )
         } catch {
             throw DomainError.library(.corruptData)

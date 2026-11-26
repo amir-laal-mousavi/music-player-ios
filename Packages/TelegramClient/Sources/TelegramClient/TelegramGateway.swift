@@ -267,6 +267,26 @@ public actor TelegramGatewayClient: TelegramGateway {
         }
     }
 
+    public func downloadThumbnail(_ thumbnail: TelegramThumbnail) async throws -> URL? {
+        try requireAuthenticated()
+        try Task.checkCancellation()
+        let data = try await performRequest(
+            [
+                "@type": "downloadFile",
+                "file_id": thumbnail.fileID,
+                "priority": 1,
+                "offset": 0,
+                "limit": 0,
+                "synchronous": true
+            ],
+            notFound: nil,
+            timesOut: false
+        )
+        let file = try TDLibMapper.file(from: responseObject(data, expectedType: "file"))
+        guard file.isCompleted, !file.localPath.isEmpty else { return nil }
+        return URL(fileURLWithPath: file.localPath)
+    }
+
     public func cancelDownload(for identity: TelegramAudioIdentity) async {
         guard let download = activeDownloads[identity] else { return }
         download.cancellation.cancel()

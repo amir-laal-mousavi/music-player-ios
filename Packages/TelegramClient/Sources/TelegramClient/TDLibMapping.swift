@@ -268,6 +268,12 @@ internal enum TDLibMapper {
         let remote = try TDLibJSON.object(file["remote"])
         let size = try TDLibJSON.int64(file["size"])
         let mimeType = try TDLibJSON.optionalString(audio["mime_type"])
+        var thumbnail: TelegramThumbnail?
+        if let cover = try TDLibJSON.optionalObject(audio["album_cover_thumbnail"]),
+           let coverFile = try TDLibJSON.optionalObject(cover["file"]),
+           let fileID = try? TDLibJSON.int32(coverFile["id"]) {
+            thumbnail = try? TelegramThumbnail(fileID: fileID)
+        }
         return try TelegramAudio(
             identity: TelegramAudioIdentity(chatID: chatID, messageID: messageID),
             fileID: try TDLibJSON.int32(file["id"]),
@@ -276,7 +282,8 @@ internal enum TDLibMapper {
             performer: try TDLibJSON.string(audio["performer"]),
             duration: TimeInterval(try TDLibJSON.int64(audio["duration"])),
             fileSize: size == 0 ? nil : size,
-            mimeType: mimeType?.isEmpty == false ? mimeType : nil
+            mimeType: mimeType?.isEmpty == false ? mimeType : nil,
+            thumbnail: thumbnail
         )
     }
 }
