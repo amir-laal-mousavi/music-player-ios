@@ -8,8 +8,8 @@ final class NowPlayingViewModel {
     private let player: any PlayerEngine
     private var observation: Task<Void, Never>?
 
-    let tracks: [Track]
-    let startingIndex: Int
+    private(set) var tracks: [Track]
+    private(set) var startingIndex: Int
 
     var state: PlaybackState = .idle
     var scrubPosition: Double = 0
@@ -29,7 +29,8 @@ final class NowPlayingViewModel {
         if let id = state.currentTrackID, let match = tracks.first(where: { $0.id == id }) {
             return match
         }
-        guard tracks.indices.contains(startingIndex) else { return nil }
+        // The fallback only applies once playback has actually been asked for.
+        guard state.status != .idle, tracks.indices.contains(startingIndex) else { return nil }
         return tracks[startingIndex]
     }
 
@@ -107,6 +108,25 @@ final class NowPlayingViewModel {
     func stop() {
         observation?.cancel()
         observation = nil
+    }
+
+    /// Replaces the queue from anywhere in the app and starts playing it.
+    func load(_ newTracks: [Track], startingAt index: Int) async {
+        guard newTracks.indices.contains(index) else { return }
+        tracks = newTracks
+        startingIndex = index
+        errorMessage = nil
+        if !hasStarted {
+            await start()
+        }
+        do {
+            try await player.play(newTracks, startingAt: index)
+            state = await player.state
+            repeatMode = await player.repeatMode
+            isShuffled = await player.isShuffled
+        } catch {
+            errorMessage = userMessage(for: error)
+        }
     }
 
     func togglePlayback() async {

@@ -1,13 +1,12 @@
 import MusicCore
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct LibraryView: View {
     let environment: AppEnvironment
     @Bindable var model: LibraryViewModel
-    @Bindable var importModel: FileImportViewModel
+    @Binding var isSearchPresented: Bool
+    let onPlay: (NowPlayingRequest) -> Void
 
-    @State private var nowPlaying: NowPlayingViewModel?
     @State private var pendingDeletion: Track?
 
     var body: some View {
@@ -24,47 +23,13 @@ struct LibraryView: View {
             }
         }
         .navigationTitle("Library")
-        .searchable(text: $model.query, prompt: "Search songs")
+        .searchable(text: $model.query, isPresented: $isSearchPresented, prompt: "Search songs")
         .musicBarBackground()
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    importModel.isShowingPicker = true
-                } label: {
-                    Label("Import files", systemImage: "square.and.arrow.down")
-                }
-                .accessibilityIdentifier("library.importFiles")
-                .disabled(importModel.isImporting)
-            }
-        }
-        .fileImporter(
-            isPresented: $importModel.isShowingPicker,
-            allowedContentTypes: [.audio],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                importModel.importFiles(urls)
-            case .failure(let error):
-                importModel.reportPickerFailure(error)
-            }
-        }
         .task { await model.start() }
         .overlay(alignment: .bottom) {
             if let errorMessage = model.errorMessage {
                 StatusBanner(kind: .error, message: errorMessage)
                     .padding()
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if let errorMessage = importModel.errorMessage {
-                StatusBanner(kind: .error, message: errorMessage)
-                    .padding()
-            }
-        }
-        .sheet(isPresented: isShowingPlayer) {
-            if let nowPlaying {
-                NowPlayingView(model: nowPlaying)
             }
         }
         .alert(
@@ -111,45 +76,21 @@ struct LibraryView: View {
     }
 
     private var emptyLibrary: some View {
-        VStack(spacing: 18) {
-            ContentUnavailableView {
-                Label("Your library is empty", systemImage: "music.note")
-            } description: {
-                Text("Import audio files from the Files app, or sign in to Telegram and pick songs from a chat. Everything stays on this device and plays offline.")
-            }
-
-            Button {
-                importModel.isShowingPicker = true
-            } label: {
-                Label("Import files", systemImage: "square.and.arrow.down")
-            }
-            .buttonStyle(PrimaryActionButtonStyle())
-            .accessibilityIdentifier("library.importFiles.empty")
-            .padding(.horizontal, 40)
+        ContentUnavailableView {
+            Label("Your library is empty", systemImage: "music.note")
+        } description: {
+            Text("Use the Import tab to add audio files, or sign in to Telegram and pick songs from a chat. Everything stays on this device and plays offline.")
         }
     }
 
     private func play(_ track: Track) {
         guard let request = model.playbackRequest(for: track) else { return }
-        nowPlaying = NowPlayingViewModel(
-            player: environment.player,
-            tracks: request.tracks,
-            startingIndex: request.startingIndex
-        )
+        onPlay(request)
     }
 
     private func displayTitle(_ track: Track) -> String {
         let title = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty ? "This audio" : "“\(title)”"
-    }
-
-    private var isShowingPlayer: Binding<Bool> {
-        Binding(
-            get: { nowPlaying != nil },
-            set: { isPresented in
-                if !isPresented { nowPlaying = nil }
-            }
-        )
     }
 
     private var deletionBinding: Binding<Bool> {

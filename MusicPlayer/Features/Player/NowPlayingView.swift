@@ -44,7 +44,6 @@ struct NowPlayingView: View {
             .task(id: model.currentTrack?.artworkURL) {
                 artworkImage = await ArtworkImageCache.shared.image(for: model.currentTrack?.artworkURL)
             }
-            .onDisappear { model.stop() }
         }
         .preferredColorScheme(.dark)
     }
