@@ -1,0 +1,8 @@
+// Shared build settings for MusicPlayer.
+// Telegram credentials come from Config/Secrets.xcconfig, which is not committed.
+// Copy Config/Secrets.example.xcconfig to Config/Secrets.xcconfig and fill in your own values.
+
+TELEGRAM_API_ID =
+TELEGRAM_API_HASH =
+
+#include? "Secrets.xcconfig"

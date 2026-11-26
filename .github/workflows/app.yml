@@ -1,0 +1,68 @@
+name: App build and tests
+
+on:
+  push:
+    paths:
+      - "MusicPlayer/**"
+      - "MusicPlayerTests/**"
+      - "MusicPlayerUITests/**"
+      - "MusicPlayer.xcodeproj/**"
+      - "Config/**"
+      - "Packages/**"
+      - ".github/workflows/app.yml"
+  pull_request:
+    paths:
+      - "MusicPlayer/**"
+      - "MusicPlayerTests/**"
+      - "MusicPlayerUITests/**"
+      - "MusicPlayer.xcodeproj/**"
+      - "Config/**"
+      - "Packages/**"
+      - ".github/workflows/app.yml"
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available | head -40
+
+      - name: Build for simulator
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project MusicPlayer.xcodeproj \
+            -scheme MusicPlayer \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Run unit and UI tests
+        run: |
+          set -o pipefail
+          DEVICE=$(xcrun simctl list devices available \
+            | grep -Eo 'iPhone [^(]*\([0-9A-F-]{36}\)' \
+            | head -1 \
+            | grep -Eo '[0-9A-F-]{36}')
+          if [ -z "$DEVICE" ]; then
+            echo "No iPhone simulator available" >&2
+            exit 1
+          fi
+          echo "Running tests on simulator $DEVICE"
+          xcodebuild \
+            -project MusicPlayer.xcodeproj \
+            -scheme MusicPlayer \
+            -destination "platform=iOS Simulator,id=$DEVICE" \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            test
