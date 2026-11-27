@@ -33,7 +33,7 @@ struct MiniPlayerView: View {
                             url: model.currentTrack?.artworkURL,
                             title: title,
                             size: 38,
-                            cornerRadius: 8
+                            cornerRadius: 19
                         )
                         VStack(alignment: .leading, spacing: 1) {
                             Text(title)

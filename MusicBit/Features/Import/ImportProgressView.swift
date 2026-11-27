@@ -28,7 +28,7 @@ struct ImportProgressView: View {
             .task { await model.start() }
             .onDisappear { model.stop() }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
     }
 
     private var header: some View {
@@ -60,7 +60,11 @@ struct ImportProgressView: View {
 
     @ViewBuilder
     private var controls: some View {
-        HStack(spacing: 12) {
+        // Two columns keep every label readable even in a narrow sheet.
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+            spacing: 10
+        ) {
             if model.canPause {
                 Button {
                     Task { await model.pause() }
@@ -143,16 +147,15 @@ struct ImportItemRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                Text(statusLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(statusTint)
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(statusLabel)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusTint)
 
             if item.status == .importing, let fraction = Format.progressFraction(item.progress) {
                 ProgressView(value: fraction)

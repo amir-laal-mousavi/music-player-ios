@@ -205,6 +205,22 @@ final class NowPlayingViewModel {
         }
     }
 
+    /// Small relative jump used by press-and-hold fast-forward/rewind.
+    func skip(by seconds: TimeInterval) async {
+        guard canSeek else { return }
+        let target = min(max(position + seconds, 0), max(duration, 0))
+        scrubPosition = target
+        errorMessage = nil
+        do {
+            try await player.seek(to: target)
+        } catch let error as DomainError {
+            if case .playback(.queueBoundary) = error { return }
+            errorMessage = userMessage(for: error)
+        } catch {
+            errorMessage = userMessage(for: error)
+        }
+    }
+
     func previous() async {
         guard canGoPrevious else { return }
         errorMessage = nil

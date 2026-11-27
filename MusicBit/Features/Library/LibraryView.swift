@@ -17,39 +17,11 @@ struct LibraryView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.tracks.isEmpty {
                 emptyLibrary
-            } else if model.filteredTracks.isEmpty {
-                if model.showsFavoritesOnly && model.query.isEmpty {
-                    ContentUnavailableView {
-                        Label("No favorites yet", systemImage: "heart")
-                    } description: {
-                        Text("Swipe a song to the right to mark it as a favorite.")
-                    }
-                } else {
-                    ContentUnavailableView.search(text: model.query)
-                }
             } else {
                 trackList
             }
         }
         .navigationTitle("Library")
-        .searchable(text: $model.query, prompt: "Search songs")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        model.toggleFavoritesFilter()
-                    } label: {
-                        Label(
-                            model.showsFavoritesOnly ? "Show all songs" : "Show favorites",
-                            systemImage: model.showsFavoritesOnly ? "heart.slash" : "heart"
-                        )
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .accessibilityIdentifier("library.menu")
-            }
-        }
         .task { await model.start() }
         .task { await playlists.start() }
         .sheet(item: $trackToAdd) { track in
@@ -78,7 +50,7 @@ struct LibraryView: View {
     private var trackList: some View {
         List {
             Section {
-                ForEach(model.filteredTracks) { track in
+                ForEach(model.tracks) { track in
                     Button {
                         play(track)
                     } label: {
@@ -95,7 +67,7 @@ struct LibraryView: View {
                                 systemImage: model.isFavorite(track) ? "heart.slash.fill" : "heart.fill"
                             )
                         }
-                        .tint(.pink)
+                        .tint(Theme.accent)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
@@ -108,7 +80,7 @@ struct LibraryView: View {
                         } label: {
                             Label("Playlist", systemImage: "text.badge.plus")
                         }
-                        .tint(.indigo)
+                        .tint(Theme.accent)
                     }
                 }
             } header: {

@@ -14,7 +14,6 @@ final class LibraryViewModel {
 
     var tracks: [Track] = []
     var favoriteIDs: Set<Track.ID> = []
-    var showsFavoritesOnly = false
     var query = ""
     var hasLoaded = false
     var errorMessage: String?
@@ -27,13 +26,12 @@ final class LibraryViewModel {
     }
 
     var filteredTracks: [Track] {
-        let base = showsFavoritesOnly ? tracks.filter { favoriteIDs.contains($0.id) } : tracks
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return base }
-        return base.filter { matches($0, needle) }
+        guard !needle.isEmpty else { return tracks }
+        return tracks.filter { matches($0, needle) }
     }
 
-    /// Query matches across the whole library, independent of the favorites filter.
+    /// Query matches across the whole library.
     var searchResults: [Track] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return [] }
@@ -42,10 +40,6 @@ final class LibraryViewModel {
 
     func isFavorite(_ track: Track) -> Bool {
         favoriteIDs.contains(track.id)
-    }
-
-    func toggleFavoritesFilter() {
-        showsFavoritesOnly.toggle()
     }
 
     func toggleFavorite(_ track: Track) async {
@@ -122,8 +116,9 @@ final class LibraryViewModel {
             || track.sourceChat.title.localizedCaseInsensitiveContains(needle)
     }
 
+    /// The library always plays the full collection, never search results.
     func playbackRequest(for track: Track) -> NowPlayingRequest? {
-        let queue = filteredTracks
+        let queue = tracks
         guard let index = queue.firstIndex(where: { $0.id == track.id }) else { return nil }
         return NowPlayingRequest(tracks: queue, startingIndex: index)
     }

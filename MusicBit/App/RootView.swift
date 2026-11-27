@@ -71,7 +71,7 @@ struct RootView: View {
 
             Tab("Playlists", systemImage: "rectangle.stack", value: AppTab.playlists) {
                 NavigationStack {
-                    PlaylistsView(model: playlists) { tracks, index in
+                    PlaylistsView(model: playlists, library: library) { tracks, index in
                         play(NowPlayingRequest(tracks: tracks, startingIndex: index))
                     }
                 }

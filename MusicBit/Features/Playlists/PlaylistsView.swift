@@ -4,6 +4,7 @@ import SwiftUI
 /// Playlists tab: every playlist, with creation, deletion and drill-in.
 struct PlaylistsView: View {
     @Bindable var model: PlaylistsViewModel
+    @Bindable var library: LibraryViewModel
     let onPlay: ([Track], Int) -> Void
 
     @State private var isCreating = false
@@ -13,6 +14,25 @@ struct PlaylistsView: View {
     var body: some View {
         List {
             Section {
+                NavigationLink {
+                    FavoritesDetailView(library: library, onPlay: onPlay)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "heart.fill")
+                            .font(.body)
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Favorites")
+                                .font(.body.weight(.semibold))
+                            Text(Format.count(favoriteCount, singular: "song", plural: "songs"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("playlists.favorites")
+
                 Button {
                     newName = ""
                     isCreating = true
@@ -78,6 +98,13 @@ struct PlaylistsView: View {
             Text("Songs stay in your library.")
         }
         .task { await model.start() }
+        .task { await library.start() }
+    }
+
+    private var favoriteCount: Int {
+        library.tracks.reduce(0) { count, track in
+            library.favoriteIDs.contains(track.id) ? count + 1 : count
+        }
     }
 }
 
@@ -175,6 +202,72 @@ struct PlaylistDetailView: View {
             return
         }
         tracks = await model.tracks(in: playlist)
+    }
+}
+
+/// The library's favorites, exposed as a playlist that is always present.
+struct FavoritesDetailView: View {
+    @Bindable var library: LibraryViewModel
+    let onPlay: ([Track], Int) -> Void
+
+    private var tracks: [Track] {
+        library.tracks.filter { library.favoriteIDs.contains($0.id) }
+    }
+
+    var body: some View {
+        List {
+            if tracks.isEmpty {
+                Section {
+                    Text("Swipe a song to the right in the library to mark it as a favorite.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    ForEach(tracks) { track in
+                        Button {
+                            play(startingAt: track)
+                        } label: {
+                            TrackRowView(track: track)
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                Task { await library.toggleFavorite(track) }
+                            } label: {
+                                Label("Unfavorite", systemImage: "heart.slash.fill")
+                            }
+                            .tint(Theme.accent)
+                        }
+                    }
+                } header: {
+                    SectionHeading(
+                        title: "Favorites",
+                        subtitle: Format.count(tracks.count, singular: "song", plural: "songs")
+                    )
+                }
+            }
+        }
+        .listStyle(.plain)
+        .navigationTitle("Favorites")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    onPlay(tracks, 0)
+                } label: {
+                    Image(systemName: "play.fill")
+                }
+                .disabled(tracks.isEmpty)
+                .accessibilityLabel("Play favorites")
+            }
+        }
+        .task { await library.start() }
+    }
+
+    private func play(startingAt track: Track) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+        onPlay(tracks, index)
     }
 }
 

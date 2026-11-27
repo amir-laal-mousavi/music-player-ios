@@ -12,9 +12,15 @@ final class ArtworkImageCache {
         cache.countLimit = 120
     }
 
+    /// Synchronous lookup so a re-created view never flashes its placeholder.
+    func cachedImage(for url: URL?) -> UIImage? {
+        guard let url, url.isFileURL else { return nil }
+        return cache.object(forKey: url as NSURL)
+    }
+
     func image(for url: URL?) async -> UIImage? {
         guard let url, url.isFileURL else { return nil }
-        if let cached = cache.object(forKey: url as NSURL) { return cached }
+        if let cached = cachedImage(for: url) { return cached }
         let data = await Task.detached(priority: .utility) {
             try? Data(contentsOf: url, options: [.mappedIfSafe])
         }.value
@@ -39,8 +45,16 @@ struct ArtworkImage: View {
 
     @State private var image: UIImage?
 
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: cornerRadius ?? size * 0.28, style: .continuous)
+    private var shape: AnyShape {
+        if let cornerRadius, cornerRadius >= size / 2 {
+            return AnyShape(Circle())
+        }
+        return AnyShape(RoundedRectangle(cornerRadius: cornerRadius ?? size * 0.28, style: .continuous))
+    }
+
+    @MainActor
+    private var displayedImage: UIImage? {
+        image ?? ArtworkImageCache.shared.cachedImage(for: url)
     }
 
     var body: some View {
@@ -48,10 +62,11 @@ struct ArtworkImage: View {
             .fill(Theme.artworkGradient(for: title))
             .frame(width: size, height: size)
             .overlay {
-                if let image {
-                    Image(uiImage: image)
+                if let displayedImage {
+                    Image(uiImage: displayedImage)
                         .resizable()
                         .scaledToFill()
+                        .frame(width: size, height: size)
                 } else {
                     Image(systemName: "music.note")
                         .font(.system(size: size * 0.36, weight: .semibold))

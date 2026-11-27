@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// System monochrome, soft white, and Apple system blue.
+/// System monochrome, soft white, and the icon's signature red.
 enum Theme {
-    static let accent = Color(red: 0.0, green: 0.478, blue: 1.0)
+    /// Matches the app icon gradient (#FA233B).
+    static let accent = Color(red: 0.980, green: 0.137, blue: 0.231)
     static let graphite = Color(red: 0.09, green: 0.10, blue: 0.12)
     static let softWhite = Color(red: 0.98, green: 0.98, blue: 0.99)
 

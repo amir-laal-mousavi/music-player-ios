@@ -60,7 +60,7 @@ struct NowPlayingView: View {
                         } label: {
                             Image(systemName: isFavorite(track) ? "heart.fill" : "heart")
                         }
-                        .tint(isFavorite(track) ? .pink : .white)
+                        .tint(isFavorite(track) ? Theme.accent : .white)
                         .accessibilityIdentifier("player.favorite")
                     }
                 }
@@ -180,16 +180,15 @@ struct NowPlayingView: View {
             .accessibilityLabel(model.isShuffled ? "Shuffle on" : "Shuffle off")
             .accessibilityIdentifier("player.shuffle")
 
-            Button {
-                Task { await model.previous() }
-            } label: {
-                Image(systemName: "backward.fill")
-                    .font(.title2)
-                    .frame(width: 48, height: 48)
-            }
-            .disabled(!model.canGoPrevious)
-            .accessibilityLabel("Previous track")
-            .accessibilityIdentifier("player.previous")
+            HoldSeekButton(
+                symbol: "backward.fill",
+                direction: .backward,
+                isEnabled: model.canGoPrevious,
+                accessibilityLabel: "Previous track",
+                accessibilityIdentifier: "player.previous",
+                onTap: { await model.previous() },
+                onSeek: { await model.skip(by: $0) }
+            )
 
             Button {
                 Task { await model.togglePlayback() }
@@ -203,16 +202,15 @@ struct NowPlayingView: View {
             .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
             .accessibilityIdentifier("player.playPause")
 
-            Button {
-                Task { await model.next() }
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.title2)
-                    .frame(width: 48, height: 48)
-            }
-            .disabled(!model.canGoNext)
-            .accessibilityLabel("Next track")
-            .accessibilityIdentifier("player.next")
+            HoldSeekButton(
+                symbol: "forward.fill",
+                direction: .forward,
+                isEnabled: model.canGoNext,
+                accessibilityLabel: "Next track",
+                accessibilityIdentifier: "player.next",
+                onTap: { await model.next() },
+                onSeek: { await model.skip(by: $0) }
+            )
 
             Button {
                 Task { await model.cycleRepeatMode() }
@@ -247,5 +245,71 @@ struct NowPlayingView: View {
         guard let track = model.currentTrack else { return "" }
         let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
         return artist.isEmpty ? "Unknown artist" : artist
+    }
+}
+
+/// Previous/next button that also rewinds or fast-forwards while held, like Music.
+private struct HoldSeekButton: View {
+    enum Direction {
+        case backward
+        case forward
+
+        var step: TimeInterval { self == .backward ? -5 : 5 }
+    }
+
+    let symbol: String
+    let direction: Direction
+    let isEnabled: Bool
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
+    let onTap: () async -> Void
+    let onSeek: (TimeInterval) async -> Void
+
+    @State private var holdTask: Task<Void, Never>?
+    @State private var isHolding = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.title2)
+            .frame(width: 48, height: 48)
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.4)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in beginPress() }
+                    .onEnded { _ in endPress() }
+            )
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityIdentifier(accessibilityIdentifier)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint(
+                "Touch and hold to \(direction == .forward ? "fast-forward" : "rewind")"
+            )
+            .accessibilityAction {
+                guard isEnabled else { return }
+                Task { await onTap() }
+            }
+    }
+
+    private func beginPress() {
+        guard isEnabled, holdTask == nil else { return }
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            isHolding = true
+            while !Task.isCancelled {
+                await onSeek(direction.step)
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+    }
+
+    private func endPress() {
+        let wasHolding = isHolding
+        holdTask?.cancel()
+        holdTask = nil
+        isHolding = false
+        guard isEnabled, !wasHolding else { return }
+        Task { await onTap() }
     }
 }
