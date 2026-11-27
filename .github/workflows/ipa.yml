@@ -29,8 +29,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -resolvePackageDependencies \
-            -project MusicPlayer.xcodeproj \
-            -scheme MusicPlayer
+            -project MusicBit.xcodeproj \
+            -scheme MusicBit
 
       - name: Archive for device (unsigned)
         env:
@@ -39,11 +39,11 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild archive \
-            -project MusicPlayer.xcodeproj \
-            -scheme MusicPlayer \
+            -project MusicBit.xcodeproj \
+            -scheme MusicBit \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/MusicPlayer.xcarchive" \
+            -archivePath "$RUNNER_TEMP/MusicBit.xcarchive" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -55,9 +55,9 @@ jobs:
       - name: Package IPA
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/MusicPlayer.xcarchive/Products/Applications/MusicPlayer.app"
+          APP="$RUNNER_TEMP/MusicBit.xcarchive/Products/Applications/MusicBit.app"
           if [ ! -d "$APP" ]; then
-            echo "Archive did not produce MusicPlayer.app" >&2
+            echo "Archive did not produce MusicBit.app" >&2
             exit 1
           fi
 
@@ -75,12 +75,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
           cd "$RUNNER_TEMP/ipa"
-          ditto -c -k --sequesterRsrc --keepParent Payload "$RUNNER_TEMP/MusicPlayer.ipa"
-          ls -lh "$RUNNER_TEMP/MusicPlayer.ipa"
+          ditto -c -k --sequesterRsrc --keepParent Payload "$RUNNER_TEMP/MusicBit.ipa"
+          ls -lh "$RUNNER_TEMP/MusicBit.ipa"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MusicPlayer-unsigned-ipa
-          path: ${{ runner.temp }}/MusicPlayer.ipa
+          name: MusicBit-unsigned-ipa
+          path: ${{ runner.temp }}/MusicBit.ipa
           if-no-files-found: error
           retention-days: 14

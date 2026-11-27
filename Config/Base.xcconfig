@@ -1,4 +1,4 @@
-// Shared build settings for MusicPlayer.
+// Shared build settings for MusicBit.
 // Telegram credentials come from Config/Secrets.xcconfig, which is not committed.
 // Copy Config/Secrets.example.xcconfig to Config/Secrets.xcconfig and fill in your own values.
 
